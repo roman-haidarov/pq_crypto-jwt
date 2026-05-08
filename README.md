@@ -11,6 +11,14 @@ The first public release intentionally focuses on one stable surface:
 
 ML-KEM/JWE is **not included** in this first release. Full JWE support needs a separate standards-compatible implementation and interoperability tests.
 
+## Requirements
+
+- Ruby `>= 3.1.0`
+- `pq_crypto` `>= 0.5.4`, `< 0.6`
+- `jwt` `>= 3.1`, `< 4.0`
+
+`pq_crypto-jwt` is Ruby-only and does not ship its own native extension. Native ML-DSA work is delegated to `pq_crypto`; Ruby 3.4+ keeps the optimized `pq_crypto` path, while Ruby 3.1-3.3 use the compatibility path provided by `pq_crypto` 0.5.3+.
+
 ## Install
 
 ```ruby
