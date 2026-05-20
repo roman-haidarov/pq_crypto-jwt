@@ -27,6 +27,13 @@ class TestHardConstraints < Minitest::Test
     assert_match(/spec\.extensions\s*=\s*\[\]/, gemspec)
   end
 
+
+  def test_runtime_ruby_floor_supports_data_define
+    gemspec = File.read(File.expand_path("../pq_crypto-jwt.gemspec", __dir__))
+
+    assert_match(/spec\.required_ruby_version\s*=\s*">= 3\.2\.0"/, gemspec)
+  end
+
   def test_runtime_dependencies_track_current_parent_line
     gemspec = File.read(File.expand_path("../pq_crypto-jwt.gemspec", __dir__))
 

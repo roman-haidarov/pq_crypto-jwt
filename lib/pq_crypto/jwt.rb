@@ -21,10 +21,16 @@ module PQCrypto
     MLDSA65 = JWA::MLDSA65
     MLDSA87 = JWA::MLDSA87
 
+    RegistrationStep = Data.define(:action)
+
     SIGNING_ALGORITHMS = [JWA::MLDSA44, JWA::MLDSA65, JWA::MLDSA87].freeze
     KEM_ALGORITHMS = [].freeze
     ALGORITHMS = SIGNING_ALGORITHMS
     ALGORITHMS_BY_JOSE = ALGORITHMS.to_h { |algorithm| [algorithm.alg, algorithm] }.freeze
+    REGISTRATION_STEPS = [
+      RegistrationStep.new(-> { SIGNING_ALGORITHMS.each { |algorithm| ::JWT::JWA.register_algorithm(algorithm) } }),
+      RegistrationStep.new(-> { ensure_akp_jwk_registered! })
+    ].freeze
 
     class << self
       def algorithms
@@ -35,8 +41,6 @@ module PQCrypto
         SIGNING_ALGORITHMS
       end
 
-      # Kept as an explicit empty list so callers can branch safely.
-      # ML-KEM/JWE remains out of scope for this JWS-only adapter release.
       def kem_algorithms
         KEM_ALGORITHMS
       end
@@ -49,8 +53,7 @@ module PQCrypto
         registration_monitor.synchronize do
           return true if registered?
 
-          SIGNING_ALGORITHMS.each { |algorithm| ::JWT::JWA.register_algorithm(algorithm) }
-          ensure_akp_jwk_registered!
+          REGISTRATION_STEPS.each { |step| instance_exec(&step.action) }
           @registered = true
         end
         true

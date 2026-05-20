@@ -5,13 +5,14 @@
 ### Changed
 
 - Retargeted the adapter to the current parent line: `pq_crypto ~> 0.6.1`.
+- Raised the Ruby floor to `>= 3.2.0` and refactored internal request/config objects to `Data.define` value objects.
 - Updated documentation and release language from draft-era ML-DSA JOSE wording to RFC 9964 terminology.
 - Explicitly pass the RFC 9964 empty ML-DSA context in all one-shot and streaming sign/verify paths.
 - Streaming detached JWS now applies to `ML-DSA-44`, `ML-DSA-65`, and `ML-DSA-87` instead of only `ML-DSA-65`.
 - PEM/DER loading now delegates to `PQCrypto::Key.from_pem` / `PQCrypto::Key.from_der` for auto-dispatch instead of manually parsing ASN.1 OIDs in the JWT adapter.
 - `signature_length_valid?` now fails closed when signature metadata cannot be resolved.
 - `JWT::JWK.classes` is no longer mutated at require-time; AKP registration happens through `PQCrypto::JWT.register!`.
-- CI matrix now covers Ruby `3.1`, `3.2`, `3.3`, `3.4`, `4.0` crossed with `jwt ~> 3.1.0` and `jwt ~> 3.2.0`.
+- CI matrix now covers Ruby `3.2`, `3.3`, `3.4`, `4.0` crossed with `jwt ~> 3.1.0` and `jwt ~> 3.2.0`.
 
 ### Added
 

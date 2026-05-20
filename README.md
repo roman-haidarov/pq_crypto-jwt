@@ -14,7 +14,7 @@ ML-KEM/JWE is **not included**. Full JWE support needs a separate standards-comp
 
 ## Requirements
 
-- Ruby `>= 3.1.0`
+- Ruby `>= 3.2.0`
 - `pq_crypto` `~> 0.6.1`
 - `jwt` `>= 3.1`, `< 4.0`
 

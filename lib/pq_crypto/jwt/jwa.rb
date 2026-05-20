@@ -6,12 +6,18 @@ require "pq_crypto"
 module PQCrypto
   module JWT
     module JWA
-      # RFC 9964 registers ML-DSA JOSE algorithms with an empty FIPS 204 context.
-      # Do not expose this as a per-token option for ML-DSA-44/65/87 JWS.
       EMPTY_CONTEXT = "".b.freeze
-      VERIFY_ERR = [PQCrypto::Error, PQCrypto::JWT::Error, ::JWT::Error, ArgumentError, TypeError, EncodingError].freeze
+      VERIFY_ERRORS = [PQCrypto::Error, PQCrypto::JWT::Error, ::JWT::Error, ArgumentError, TypeError, EncodingError].freeze
+      SIGN_ERRORS = [PQCrypto::Error, PQCrypto::JWT::Error, TypeError, EncodingError].freeze
+
+      SignInput = Data.define(:data, :key)
+      VerifyInput = Data.define(:data, :signature, :key)
+      KeyRequirement = Data.define(:klass, :role)
 
       module MLDSA
+        SECRET_KEY = KeyRequirement.new(PQCrypto::Signature::SecretKey, "signing").freeze
+        PUBLIC_KEY = KeyRequirement.new(PQCrypto::Signature::PublicKey, "verification").freeze
+
         def valid_alg?(alg_to_validate)
           alg_to_validate == alg
         end
@@ -25,15 +31,15 @@ module PQCrypto
         end
 
         def sign_io(**)
-          raise PQCrypto::JWT::UnsupportedFeature, "#{alg} does not support streaming JWS"
+          unsupported_streaming!
         end
 
         def verify_io(**)
-          raise PQCrypto::JWT::UnsupportedFeature, "#{alg} does not support streaming JWS"
+          unsupported_streaming!
         end
 
         def verify_io!(**)
-          raise PQCrypto::JWT::UnsupportedFeature, "#{alg} does not support streaming JWS"
+          unsupported_streaming!
         end
 
         def key_kind
@@ -41,46 +47,52 @@ module PQCrypto
         end
 
         def sign(data:, signing_key:)
-          ensure_secret_key!(signing_key)
-          raise ArgumentError, "data must be a String" unless data.is_a?(String)
+          input = SignInput.new(data: data, key: signing_key)
+          ensure_secret_key!(input.key)
+          raise ArgumentError, "data must be a String" unless input.data.is_a?(String)
 
-          signing_key.sign(data.b, context: PQCrypto::JWT::JWA::EMPTY_CONTEXT)
+          input.key.sign(input.data.b, context: EMPTY_CONTEXT)
         rescue PQCrypto::JWT::KeyTypeError, ArgumentError
           raise
-        rescue StandardError => e
+        rescue *SIGN_ERRORS => e
           raise ::JWT::EncodeError, e.message
         end
 
         def verify(data:, signature:, verification_key:)
-          return false unless public_key_for_this_algorithm?(verification_key)
-          return false unless data.is_a?(String)
-          return false unless signature.is_a?(String)
-          return false unless signature_length_valid?(signature)
+          input = VerifyInput.new(data: data, signature: signature, key: verification_key)
+          return false unless public_key_for_this_algorithm?(input.key)
+          return false unless input.data.is_a?(String)
+          return false unless input.signature.is_a?(String)
+          return false unless signature_length_valid?(input.signature)
 
-          verification_key.verify(data.b, signature.b, context: PQCrypto::JWT::JWA::EMPTY_CONTEXT)
-        rescue *VERIFY_ERR
+          input.key.verify(input.data.b, input.signature.b, context: EMPTY_CONTEXT)
+        rescue *VERIFY_ERRORS
           false
         end
 
         private
 
+        def unsupported_streaming!
+          raise PQCrypto::JWT::UnsupportedFeature, "#{alg} does not support streaming JWS"
+        end
+
         def ensure_secret_key!(key)
-          unless key.is_a?(PQCrypto::Signature::SecretKey)
-            raise PQCrypto::JWT::KeyTypeError,
-                  "#{alg} signing requires PQCrypto::Signature::SecretKey"
+          ensure_key!(key, SECRET_KEY)
+        end
+
+        def ensure_public_key!(key)
+          ensure_key!(key, PUBLIC_KEY)
+        end
+
+        def ensure_key!(key, requirement)
+          unless key.is_a?(requirement.klass)
+            raise PQCrypto::JWT::KeyTypeError, "#{alg} #{requirement.role} requires #{requirement.klass}"
           end
 
           return if key.algorithm == pq_crypto_algorithm
 
           raise PQCrypto::JWT::KeyTypeError,
-                "#{alg} signing requires #{pq_crypto_algorithm.inspect} key, got #{key.algorithm.inspect}"
-        end
-
-        def ensure_public_key!(key)
-          unless public_key_for_this_algorithm?(key)
-            raise PQCrypto::JWT::KeyTypeError,
-                  "#{alg} verification requires PQCrypto::Signature::PublicKey for #{pq_crypto_algorithm.inspect}"
-          end
+                "#{alg} #{requirement.role} requires #{pq_crypto_algorithm.inspect} key, got #{key.algorithm.inspect}"
         end
 
         def public_key_for_this_algorithm?(key)
@@ -91,7 +103,7 @@ module PQCrypto
           details = PQCrypto::Signature.details(pq_crypto_algorithm)
           expected = details[:signature_bytes] || details["signature_bytes"]
           expected.nil? || signature.bytesize == expected
-        rescue *VERIFY_ERR
+        rescue *VERIFY_ERRORS
           false
         end
       end

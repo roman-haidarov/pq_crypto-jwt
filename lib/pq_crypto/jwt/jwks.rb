@@ -6,40 +6,42 @@ module PQCrypto
       module_function
 
       CACHE_EMPTY = Object.new.freeze
+      KeyFilter = Data.define(:kid, :alg, :thumbprint) do
+        def match?(key)
+          values = { "kid" => kid, "alg" => alg, "thumbprint" => thumbprint }
+          values.all? do |field, expected|
+            expected.nil? || value_for(key, field) == expected
+          end
+        end
+
+        private
+
+        def value_for(key, field)
+          field == "thumbprint" ? PQCrypto::JWT::JWK.thumbprint(key) : key[field] || key[field.to_sym]
+        end
+      end
 
       def from_keys(public_keys, kids: nil)
         keys = Array(public_keys).each_with_index.map do |public_key, index|
-          kid = kids&.fetch(index, nil)
-          PQCrypto::JWT::JWK.from_public_key(public_key, kid: kid)
+          PQCrypto::JWT::JWK.from_public_key(public_key, kid: kids&.fetch(index, nil))
         end
         { "keys" => keys }.freeze
       end
 
       def find(jwks, kid: nil, alg: nil, thumbprint: nil)
-        keys_from(jwks).find do |key|
-          (kid.nil? || value_for(key, "kid") == kid) &&
-            (alg.nil? || value_for(key, "alg") == alg) &&
-            (thumbprint.nil? || PQCrypto::JWT::JWK.thumbprint(key) == thumbprint)
-        end
+        find_all(jwks, kid: kid, alg: alg, thumbprint: thumbprint).first
       end
 
       def find_all(jwks, kid: nil, alg: nil, thumbprint: nil)
-        keys_from(jwks).select do |key|
-          (kid.nil? || value_for(key, "kid") == kid) &&
-            (alg.nil? || value_for(key, "alg") == alg) &&
-            (thumbprint.nil? || PQCrypto::JWT::JWK.thumbprint(key) == thumbprint)
-        end
+        filter = KeyFilter.new(kid: kid, alg: alg, thumbprint: thumbprint)
+        keys_from(jwks).select { |key| filter.match?(key) }
       end
 
       def loader(jwks_hash_or_callable)
         cached = CACHE_EMPTY
         lambda do |options = {}|
-          options ||= {}
-          cached = CACHE_EMPTY if options[:invalidate]
-
-          if cached.equal?(CACHE_EMPTY)
-            cached = jwks_hash_or_callable.respond_to?(:call) ? jwks_hash_or_callable.call(options) : jwks_hash_or_callable
-          end
+          cached = CACHE_EMPTY if (options || {})[:invalidate]
+          cached = resolve_jwks(jwks_hash_or_callable, options || {}) if cached.equal?(CACHE_EMPTY)
           cached
         end
       end
@@ -51,15 +53,15 @@ module PQCrypto
       end
       private_class_method :keys_from
 
+      def resolve_jwks(source, options)
+        source.respond_to?(:call) ? source.call(options) : source
+      end
+      private_class_method :resolve_jwks
+
       def stringify_hash(hash)
         hash.to_hash.each_with_object({}) { |(key, value), out| out[String(key)] = value }
       end
       private_class_method :stringify_hash
-
-      def value_for(hash, key)
-        hash[key] || hash[key.to_sym]
-      end
-      private_class_method :value_for
     end
   end
 end
