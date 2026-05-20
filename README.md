@@ -6,7 +6,7 @@ This release focuses on the RFC 9964 ML-DSA JWS surface:
 
 - ML-DSA JWS signing and verification for `ruby-jwt`
 - AKP JWK/JWKS helpers for ML-DSA verification keys
-- seed-based private AKP JWK import and guarded export paths
+- seed-based private AKP JWK import and explicit seed export paths
 - PEM/DER import helpers for ML-DSA SPKI/PKCS#8 keys through `PQCrypto::Key`
 - streaming detached JWS helpers for `ML-DSA-44`, `ML-DSA-65`, and `ML-DSA-87`
 
@@ -113,16 +113,19 @@ Private AKP JWK uses RFC 9964 seed format: `priv` is the 32-byte ML-DSA seed enc
 secret_key = PQCrypto::JWT::JWK.secret_key_from_jwk(private_jwk)
 ```
 
-Export is intentionally guarded because current `pq_crypto` 0.6.x can import seed-aware keys but does not expose a stable public seed accessor / public-key-from-seed API in all paths:
+With `pq_crypto 0.6.1`, private import trusts the JWK `pub` field as metadata because the parent gem does not expose public seed derivation yet. Callers that need a strict `pub`/`priv` consistency check can request it explicitly; this will raise `UnsupportedFeature` until the parent exposes `Signature.public_key_from_seed` or `Signature.keypair_from_seed`:
 
 ```ruby
-# Works when the caller supplies the matching public key or when pq_crypto exposes
-# Signature.public_key_from_seed / Signature.keypair_from_seed.
-jwk = PQCrypto::JWT::JWK.from_seed(seed_32_bytes, alg: "ML-DSA-65", public_key: public_key)
-
-# Works only for seed-aware SecretKey objects; expanded-only keys raise UnsupportedFeature.
-jwk = PQCrypto::JWT::JWK.from_secret_key(seed_aware_keypair_or_secret_key, public_key: public_key)
+secret_key = PQCrypto::JWT::JWK.secret_key_from_jwk(private_jwk, verify_public: true)
 ```
+
+Export is intentionally explicit. Current `pq_crypto 0.6.1` can import seed-aware keys but does not expose a stable public seed accessor / public-key-from-seed API, so use `from_seed` and pass the matching public key:
+
+```ruby
+jwk = PQCrypto::JWT::JWK.from_seed(seed_32_bytes, alg: "ML-DSA-65", public_key: public_key)
+```
+
+`from_secret_key` is reserved for a future parent release that exposes a public seed accessor. Expanded-only keys, and current `pq_crypto 0.6.1` keys, raise `UnsupportedFeature` instead of reading parent private state.
 
 JWKS lookup with `ruby-jwt`:
 

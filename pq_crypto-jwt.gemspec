@@ -11,6 +11,11 @@ Gem::Specification.new do |spec|
   spec.description   = "Ruby-only adapter that adds post-quantum ML-DSA JWS signing and AKP JWK/JWKS helpers to ruby-jwt, backed by pq_crypto."
   spec.homepage      = "https://github.com/roman-haidarov/pq_crypto-jwt"
   spec.license       = "MIT"
+  spec.metadata = {
+    "source_code_uri" => "https://github.com/roman-haidarov/pq_crypto-jwt",
+    "changelog_uri" => "https://github.com/roman-haidarov/pq_crypto-jwt/blob/main/CHANGELOG.md",
+    "bug_tracker_uri" => "https://github.com/roman-haidarov/pq_crypto-jwt/issues"
+  }
   spec.required_ruby_version = ">= 3.1.0"
 
   spec.files = Dir["lib/**/*.rb", "README.md", "CHANGELOG.md", "LICENSE.txt"]

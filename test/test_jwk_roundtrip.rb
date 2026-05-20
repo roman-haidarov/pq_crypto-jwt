@@ -26,11 +26,33 @@ class TestJWKRoundtrip < Minitest::Test
     end
   end
 
+
+  def test_from_seed_requires_public_key_until_parent_exposes_public_derivation
+    skip "pq_crypto exposes public seed derivation" if PQCrypto::Signature.respond_to?(:public_key_from_seed) || PQCrypto::Signature.respond_to?(:keypair_from_seed)
+
+    assert_raises(PQCrypto::JWT::UnsupportedFeature) do
+      PQCrypto::JWT::JWK.from_seed("s" * 32, alg: "ML-DSA-65")
+    end
+  end
+
+  def test_private_key_jwk_import_strict_public_check_requires_parent_derivation
+    skip "pq_crypto exposes public seed derivation" if PQCrypto::Signature.respond_to?(:public_key_from_seed) || PQCrypto::Signature.respond_to?(:keypair_from_seed)
+
+    keypair = PQCrypto::JWT::Keys.generate("ML-DSA-65")
+    jwk = PQCrypto::JWT::JWK.from_public_key(keypair.public_key).merge("priv" => PQCrypto::JWT::JWK.base64url("z" * 32))
+
+    assert_raises(PQCrypto::JWT::UnsupportedFeature) do
+      PQCrypto::JWT::JWK.secret_key_from_jwk(jwk, verify_public: true)
+    end
+  end
+
   def test_private_key_jwk_export_from_seed_aware_keypair_when_parent_exposes_seed
     skip "pq_crypto does not expose public seed-aware keypair API yet" unless PQCrypto::Signature.respond_to?(:keypair_from_seed)
 
     seed = "s" * 32
     keypair = PQCrypto::Signature.keypair_from_seed(:ml_dsa_65, seed)
+    skip "pq_crypto SecretKey does not expose #to_seed yet" unless keypair.secret_key.respond_to?(:to_seed)
+
     jwk = PQCrypto::JWT::JWK.from_secret_key(keypair, kid: "seed-key")
 
     assert_equal "AKP", jwk.fetch("kty")

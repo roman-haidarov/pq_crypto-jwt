@@ -9,8 +9,6 @@ module JWT
       KTYS = [
         KTY,
         PQCrypto::Signature::PublicKey,
-        PQCrypto::Signature::SecretKey,
-        PQCrypto::Signature::Keypair,
         JWT::JWK::AKP,
       ].freeze
       AKP_KEY_ELEMENTS = %i[kty alg pub priv].freeze
@@ -38,17 +36,17 @@ module JWT
       end
 
       def public_key
-        @public_key ||= PQCrypto::JWT::JWK.public_key_from_jwk(string_export(include_private: false))
+        @public_key ||= @checked_public_key || PQCrypto::JWT::JWK.public_key_from_jwk(string_export(include_private: false))
       end
 
       def signing_key
-        private? ? secret_key : public_key
+        @signing_key ||= private? ? secret_key : public_key
       end
 
       def secret_key
         raise JWT::JWKError, "AKP JWK does not contain private material" unless private?
 
-        @secret_key ||= PQCrypto::JWT::JWK.secret_key_from_jwk(string_export(include_private: true))
+        @secret_key ||= @checked_secret_key || PQCrypto::JWT::JWK.secret_key_from_jwk(string_export(include_private: true))
       end
 
       def verify_key
@@ -95,12 +93,12 @@ module JWT
           key.transform_keys(&:to_sym)
         when PQCrypto::Signature::PublicKey
           PQCrypto::JWT::JWK.from_public_key(key).transform_keys(&:to_sym)
-        when PQCrypto::Signature::Keypair
-          PQCrypto::JWT::JWK.from_secret_key(key).transform_keys(&:to_sym)
-        when PQCrypto::Signature::SecretKey
-          PQCrypto::JWT::JWK.from_secret_key(key).transform_keys(&:to_sym)
+        when PQCrypto::Signature::Keypair, PQCrypto::Signature::SecretKey
+          raise JWT::JWKError,
+                "AKP private JWK export from SecretKey requires public seed-export APIs in pq_crypto; " \
+                "use PQCrypto::JWT::JWK.from_seed(seed, alg:, public_key:) instead"
         else
-          raise ArgumentError, "key must be an AKP JWK Hash or PQCrypto ML-DSA key"
+          raise ArgumentError, "key must be an AKP JWK Hash or PQCrypto::Signature::PublicKey"
         end
       rescue PQCrypto::JWT::Error => e
         raise JWT::JWKError, e.message
@@ -114,12 +112,9 @@ module JWT
         raise JWT::JWKError, "AKP JWK priv must be accompanied by pub" if key_params[:priv] && !key_params[:pub]
         raise JWT::JWKError, "Unsupported AKP JWK alg: #{key_params[:alg].inspect}" unless PQCrypto::JWT.algorithm_for(key_params[:alg])
 
-        # Force parsing during construction so malformed private/public material fails early.
-        if key_params[:priv]
-          PQCrypto::JWT::JWK.secret_key_from_jwk(key_params.transform_keys(&:to_s))
-        else
-          PQCrypto::JWT::JWK.public_key_from_jwk(key_params.transform_keys(&:to_s))
-        end
+        parsed = key_params.transform_keys(&:to_s)
+        @checked_public_key = PQCrypto::JWT::JWK.public_key_from_jwk(parsed)
+        @checked_secret_key = PQCrypto::JWT::JWK.secret_key_from_jwk(parsed) if key_params[:priv]
       rescue PQCrypto::JWT::Error => e
         raise JWT::JWKError, e.message
       end

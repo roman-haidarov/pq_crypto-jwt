@@ -8,7 +8,9 @@ class TestHardConstraints < Minitest::Test
     /_native_/,
     /__test_/,
     /Testing::/,
-    /pqc_container_/
+    /pqc_container_/,
+    /instance_variable_get/,
+    /instance_variable_defined/
   ].freeze
 
   def test_no_native_extension_layout
@@ -30,6 +32,11 @@ class TestHardConstraints < Minitest::Test
 
     assert_match(/spec\.add_dependency\s+"pq_crypto",\s+"~> 0\.6\.1"/, gemspec)
     assert_match(/spec\.add_dependency\s+"jwt",\s+">= 3\.1",\s+"< 4\.0"/, gemspec)
+  end
+
+  def test_akp_auto_dispatch_does_not_claim_private_key_export
+    refute_includes JWT::JWK::AKP::KTYS, PQCrypto::Signature::SecretKey
+    refute_includes JWT::JWK::AKP::KTYS, PQCrypto::Signature::Keypair
   end
 
   def test_lib_avoids_private_pq_crypto_api

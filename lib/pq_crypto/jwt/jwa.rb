@@ -57,7 +57,7 @@ module PQCrypto
           return false unless signature_length_valid?(signature)
 
           verification_key.verify(data.b, signature.b, context: PQCrypto::JWT::JWA::EMPTY_CONTEXT)
-        rescue StandardError
+        rescue PQCrypto::Error, PQCrypto::JWT::Error, ::JWT::Error, ArgumentError, TypeError
           false
         end
 
@@ -90,7 +90,7 @@ module PQCrypto
           details = PQCrypto::Signature.details(pq_crypto_algorithm)
           expected = details[:signature_bytes] || details["signature_bytes"]
           expected.nil? || signature.bytesize == expected
-        rescue StandardError
+        rescue PQCrypto::Error, PQCrypto::JWT::Error, ::JWT::Error, ArgumentError, TypeError
           false
         end
       end

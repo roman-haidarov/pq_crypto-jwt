@@ -60,18 +60,18 @@ module PQCrypto
         raise PQCrypto::JWT::Error, e.message
       end
 
-      def secret_key_from_jwk(hash)
+      # Imports the RFC 9964 private AKP `priv` seed.
+      #
+      # `pub` is still required by the JWK shape. With pq_crypto 0.6.1 the adapter cannot
+      # derive public bytes from a seed through public API, so `verify_public: true` raises
+      # UnsupportedFeature unless a future parent release exposes public seed derivation.
+      def secret_key_from_jwk(hash, verify_public: false)
         jwk = normalize_hash!(hash)
         algorithm = algorithm_from_jwk!(jwk)
         decode_required_key_bytes!(jwk, "pub", algorithm, :public_key_bytes)
         seed = decode_required_seed!(jwk, algorithm)
 
-        if (derived_public = public_key_from_seed_if_supported(algorithm, seed))
-          imported_public = public_key_from_jwk(jwk)
-          unless imported_public.to_bytes == derived_public.to_bytes
-            raise PQCrypto::JWT::Error, "AKP JWK pub does not match priv seed"
-          end
-        end
+        verify_private_public_consistency!(jwk, algorithm, seed) if verify_public
 
         PQCrypto::Signature.secret_key_from_seed(algorithm, seed)
       rescue ArgumentError, PQCrypto::Error => e
@@ -216,24 +216,17 @@ module PQCrypto
       private_class_method :validate_algorithm!
 
       def seed_from_secret_key(secret_key)
-        if secret_key.respond_to?(:to_seed)
-          return validate_seed!(secret_key.to_seed, secret_key.algorithm)
-        end
-
         if secret_key.respond_to?(:seed?) && !secret_key.seed?
           raise PQCrypto::JWT::UnsupportedFeature,
                 "SecretKey was not created from a seed; cannot export RFC 9964 AKP JWK"
         end
 
-        # Compatibility bridge for pq_crypto 0.6.1: seed material is tracked internally
-        # for seed-aware PKCS#8, but public #to_seed/#seed? are not exposed yet.
-        if secret_key.instance_variable_defined?(:@seed)
-          seed = secret_key.instance_variable_get(:@seed)
-          return validate_seed!(seed, secret_key.algorithm) if seed
+        if secret_key.respond_to?(:to_seed)
+          return validate_seed!(secret_key.to_seed, secret_key.algorithm)
         end
 
         raise PQCrypto::JWT::UnsupportedFeature,
-              "SecretKey seed material is unavailable; cannot export RFC 9964 AKP JWK"
+              "SecretKey seed export requires a public pq_crypto #to_seed API; use from_seed(..., public_key:) instead"
       end
       private_class_method :seed_from_secret_key
 
@@ -250,6 +243,20 @@ module PQCrypto
         nil
       end
       private_class_method :public_key_from_seed_if_supported
+
+      def verify_private_public_consistency!(jwk, algorithm, seed)
+        derived_public = public_key_from_seed_if_supported(algorithm, seed)
+        unless derived_public
+          raise PQCrypto::JWT::UnsupportedFeature,
+                "AKP JWK pub/priv consistency verification requires pq_crypto public_key_from_seed/keypair_from_seed"
+        end
+
+        imported_public = public_key_from_jwk(jwk)
+        return if imported_public.to_bytes == derived_public.to_bytes
+
+        raise PQCrypto::JWT::Error, "AKP JWK pub does not match priv seed"
+      end
+      private_class_method :verify_private_public_consistency!
     end
   end
 end
