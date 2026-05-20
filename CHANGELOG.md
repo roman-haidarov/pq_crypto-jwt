@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.2.0
+
+### Changed
+
+- Retargeted the adapter to the current parent line: `pq_crypto ~> 0.6.1`.
+- Updated documentation and release language from draft-era ML-DSA JOSE wording to RFC 9964 terminology.
+- Explicitly pass the RFC 9964 empty ML-DSA context in all one-shot and streaming sign/verify paths.
+- Streaming detached JWS now applies to `ML-DSA-44`, `ML-DSA-65`, and `ML-DSA-87` instead of only `ML-DSA-65`.
+- PEM/DER loading now delegates to `PQCrypto::Key.from_pem` / `PQCrypto::Key.from_der` for auto-dispatch instead of manually parsing ASN.1 OIDs in the JWT adapter.
+- `signature_length_valid?` now fails closed when signature metadata cannot be resolved.
+- `JWT::JWK.classes` is no longer mutated at require-time; AKP registration happens through `PQCrypto::JWT.register!`.
+- CI matrix now covers Ruby `3.1`, `3.2`, `3.3`, `3.4`, `4.0` crossed with `jwt ~> 3.1.0` and `jwt ~> 3.2.0`.
+
+### Added
+
+- `PQCrypto::JWT::UnsupportedFeature` for release-scope or parent-API-gated functionality.
+- Seed-based private AKP JWK import via `PQCrypto::JWT::JWK.secret_key_from_jwk`.
+- Guarded seed-based private AKP JWK export helpers:
+  - `PQCrypto::JWT::JWK.from_seed`
+  - `PQCrypto::JWT::JWK.from_secret_key`
+- Optional public JWK metadata on export: `use:` and `key_ops:`.
+- DER helper methods:
+  - `PQCrypto::JWT::Keys.public_from_der`
+  - `PQCrypto::JWT::Keys.secret_from_der`
+- JWKS lookup helpers for JWK thumbprint fallback and multi-match rotation windows:
+  - `PQCrypto::JWT::JWKS.find(..., thumbprint:)`
+  - `PQCrypto::JWT::JWKS.find_all`
+- Negative tests for malformed streaming headers, extra compact segments, invalid private seed lengths, dependency constraints, and read contract behavior.
+
+### Fixed
+
+- `DetachedSigningInputIO#read(nil)` now follows the Ruby IO contract and reads to EOF.
+- Streaming verification now rejects non-object decoded JOSE headers before consulting `alg`.
+- Streaming verification now rejects compact tokens with extra segments.
+- JWKS loader caching no longer relies on `||=`, so falsey JWKS values do not cause repeated reloads.
+
+### Deferred
+
+- Composite / hybrid JOSE signatures.
+- ML-KEM / JWE support.
+- RBS / Sorbet signatures.
+- Macro refactor for the three ML-DSA modules.
+
 ## 0.1.2
 
 ### Changed

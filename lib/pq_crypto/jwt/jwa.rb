@@ -6,6 +6,10 @@ require "pq_crypto"
 module PQCrypto
   module JWT
     module JWA
+      # RFC 9964 registers ML-DSA JOSE algorithms with an empty FIPS 204 context.
+      # Do not expose this as a per-token option for ML-DSA-44/65/87 JWS.
+      EMPTY_CONTEXT = "".b.freeze
+
       module MLDSA
         def valid_alg?(alg_to_validate)
           alg_to_validate == alg
@@ -20,15 +24,15 @@ module PQCrypto
         end
 
         def sign_io(**)
-          raise PQCrypto::JWT::UnsupportedAlgorithm, "#{alg} does not support streaming JWS"
+          raise PQCrypto::JWT::UnsupportedFeature, "#{alg} does not support streaming JWS"
         end
 
         def verify_io(**)
-          raise PQCrypto::JWT::UnsupportedAlgorithm, "#{alg} does not support streaming JWS"
+          raise PQCrypto::JWT::UnsupportedFeature, "#{alg} does not support streaming JWS"
         end
 
         def verify_io!(**)
-          raise PQCrypto::JWT::UnsupportedAlgorithm, "#{alg} does not support streaming JWS"
+          raise PQCrypto::JWT::UnsupportedFeature, "#{alg} does not support streaming JWS"
         end
 
         def key_kind
@@ -39,7 +43,7 @@ module PQCrypto
           ensure_secret_key!(signing_key)
           raise ArgumentError, "data must be a String" unless data.is_a?(String)
 
-          signing_key.sign(data.b)
+          signing_key.sign(data.b, context: PQCrypto::JWT::JWA::EMPTY_CONTEXT)
         rescue PQCrypto::JWT::KeyTypeError, ArgumentError
           raise
         rescue StandardError => e
@@ -52,8 +56,8 @@ module PQCrypto
           return false unless signature.is_a?(String)
           return false unless signature_length_valid?(signature)
 
-          verification_key.verify(data.b, signature.b)
-        rescue PQCrypto::InvalidKeyError, PQCrypto::JWT::Error, ArgumentError
+          verification_key.verify(data.b, signature.b, context: PQCrypto::JWT::JWA::EMPTY_CONTEXT)
+        rescue StandardError
           false
         end
 
@@ -87,7 +91,7 @@ module PQCrypto
           expected = details[:signature_bytes] || details["signature_bytes"]
           expected.nil? || signature.bytesize == expected
         rescue StandardError
-          true
+          false
         end
       end
     end

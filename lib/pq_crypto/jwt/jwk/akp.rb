@@ -9,9 +9,12 @@ module JWT
       KTYS = [
         KTY,
         PQCrypto::Signature::PublicKey,
+        PQCrypto::Signature::SecretKey,
+        PQCrypto::Signature::Keypair,
         JWT::JWK::AKP,
       ].freeze
       AKP_KEY_ELEMENTS = %i[kty alg pub priv].freeze
+      PRIVATE_EXPORT_OPTIONS = %i[private include_private].freeze
 
       class NullKidGenerator
         def initialize(_jwk); end
@@ -31,31 +34,41 @@ module JWT
       end
 
       def private?
-        false
+        parameters.key?(:priv) && !parameters[:priv].nil?
       end
 
       def public_key
-        @public_key ||= PQCrypto::JWT::JWK.public_key_from_jwk(string_export)
+        @public_key ||= PQCrypto::JWT::JWK.public_key_from_jwk(string_export(include_private: false))
       end
 
       def signing_key
-        public_key
+        private? ? secret_key : public_key
+      end
+
+      def secret_key
+        raise JWT::JWKError, "AKP JWK does not contain private material" unless private?
+
+        @secret_key ||= PQCrypto::JWT::JWK.secret_key_from_jwk(string_export(include_private: true))
       end
 
       def verify_key
         public_key
       end
 
-      def export(_options = {})
-        parameters.clone.tap { |exported| exported.delete(:priv) }
+      def export(options = {})
+        options ||= {}
+        include_private = PRIVATE_EXPORT_OPTIONS.any? { |key| options[key] }
+        parameters.clone.tap { |exported| exported.delete(:priv) unless include_private }
       end
 
       def members
-        %i[alg kty pub].each_with_object({}) { |key, out| out[key] = self[key] }
+        keys = %i[alg kty pub]
+        keys << :priv if private?
+        keys.each_with_object({}) { |key, out| out[key] = self[key] }
       end
 
       def key_digest
-        PQCrypto::JWT::JWK.thumbprint(string_export)
+        PQCrypto::JWT::JWK.thumbprint(string_export(include_private: false))
       end
 
       def jwa
@@ -70,23 +83,27 @@ module JWT
 
       private
 
-      def string_export
-        export.transform_keys(&:to_s)
+      def string_export(include_private: false)
+        export(include_private: include_private).transform_keys(&:to_s)
       end
 
       def extract_key_params(key)
         case key
         when JWT::JWK::AKP
-          key.export
+          key.export(include_private: key.private?)
         when Hash
           key.transform_keys(&:to_sym)
         when PQCrypto::Signature::PublicKey
           PQCrypto::JWT::JWK.from_public_key(key).transform_keys(&:to_sym)
-        when PQCrypto::Signature::Keypair, PQCrypto::Signature::SecretKey
-          raise JWT::JWKError, "AKP private JWK export is not supported in the first release"
+        when PQCrypto::Signature::Keypair
+          PQCrypto::JWT::JWK.from_secret_key(key).transform_keys(&:to_sym)
+        when PQCrypto::Signature::SecretKey
+          PQCrypto::JWT::JWK.from_secret_key(key).transform_keys(&:to_sym)
         else
-          raise ArgumentError, "key must be a public AKP JWK Hash or PQCrypto::Signature::PublicKey"
+          raise ArgumentError, "key must be an AKP JWK Hash or PQCrypto ML-DSA key"
         end
+      rescue PQCrypto::JWT::Error => e
+        raise JWT::JWKError, e.message
       end
 
       def check_jwk_params!(key_params, params)
@@ -94,11 +111,18 @@ module JWT
         raise JWT::JWKError, "Incorrect 'kty' value: #{key_params[:kty]}, expected #{KTY}" unless key_params[:kty] == KTY
         raise JWT::JWKError, "AKP JWK alg is required" unless key_params[:alg]
         raise JWT::JWKError, "AKP JWK pub is required" unless key_params[:pub]
-        raise JWT::JWKError, "AKP private JWK import is not supported in the first release" if key_params[:priv]
+        raise JWT::JWKError, "AKP JWK priv must be accompanied by pub" if key_params[:priv] && !key_params[:pub]
         raise JWT::JWKError, "Unsupported AKP JWK alg: #{key_params[:alg].inspect}" unless PQCrypto::JWT.algorithm_for(key_params[:alg])
+
+        # Force parsing during construction so malformed private/public material fails early.
+        if key_params[:priv]
+          PQCrypto::JWT::JWK.secret_key_from_jwk(key_params.transform_keys(&:to_s))
+        else
+          PQCrypto::JWT::JWK.public_key_from_jwk(key_params.transform_keys(&:to_s))
+        end
+      rescue PQCrypto::JWT::Error => e
+        raise JWT::JWKError, e.message
       end
     end
   end
 end
-
-JWT::JWK.classes.delete(JWT::JWK::AKP)

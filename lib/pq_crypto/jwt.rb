@@ -23,7 +23,7 @@ module PQCrypto
 
     SIGNING_ALGORITHMS = [JWA::MLDSA44, JWA::MLDSA65, JWA::MLDSA87].freeze
     KEM_ALGORITHMS = [].freeze
-    ALGORITHMS = SIGNING_ALGORITHMS.freeze
+    ALGORITHMS = SIGNING_ALGORITHMS
     ALGORITHMS_BY_JOSE = ALGORITHMS.to_h { |algorithm| [algorithm.alg, algorithm] }.freeze
 
     class << self
@@ -36,7 +36,7 @@ module PQCrypto
       end
 
       # Kept as an explicit empty list so callers can branch safely.
-      # ML-KEM/JWE is intentionally not part of the first stable release.
+      # ML-KEM/JWE remains out of scope for this JWS-only adapter release.
       def kem_algorithms
         KEM_ALGORITHMS
       end

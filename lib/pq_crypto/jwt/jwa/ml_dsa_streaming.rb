@@ -8,15 +8,15 @@ module PQCrypto
     module JWA
       module MLDSAStreaming
         DEFAULT_CHUNK_SIZE = 1 << 20
-        EMPTY_CONTEXT = "".b.freeze
 
         def streaming_supported?
-          pq_crypto_algorithm == :ml_dsa_65 &&
-            PQCrypto::Signature.supported.include?(:ml_dsa_65)
+          PQCrypto::Signature.supported.include?(pq_crypto_algorithm)
+        rescue StandardError
+          false
         end
 
         def sign_io(signing_key:, payload_io: nil, io: nil, header_fields: {}, chunk_size: DEFAULT_CHUNK_SIZE)
-          raise PQCrypto::JWT::UnsupportedAlgorithm, "#{alg} does not support streaming JWS" unless streaming_supported?
+          raise PQCrypto::JWT::UnsupportedFeature, "#{alg} does not support streaming JWS" unless streaming_supported?
 
           ensure_secret_key!(signing_key)
           source = payload_io || io
@@ -25,7 +25,11 @@ module PQCrypto
           header = stringify_keys(header_fields || {}).merge("alg" => alg)
           encoded_header = base64url(JSON.generate(header))
           signing_input = DetachedSigningInputIO.new(encoded_header, source, chunk_size: chunk_size)
-          signature = signing_key.sign_io(signing_input, chunk_size: chunk_size, context: EMPTY_CONTEXT)
+          signature = signing_key.sign_io(
+            signing_input,
+            chunk_size: chunk_size,
+            context: PQCrypto::JWT::JWA::EMPTY_CONTEXT
+          )
           "#{encoded_header}..#{base64url(signature)}"
         rescue PQCrypto::JWT::Error, ArgumentError
           raise
@@ -34,24 +38,35 @@ module PQCrypto
         end
 
         def verify_io(verification_key:, token:, payload_io:, chunk_size: DEFAULT_CHUNK_SIZE)
-          raise PQCrypto::JWT::UnsupportedAlgorithm, "#{alg} does not support streaming JWS" unless streaming_supported?
+          raise PQCrypto::JWT::UnsupportedFeature, "#{alg} does not support streaming JWS" unless streaming_supported?
           ensure_public_key!(verification_key)
           raise ArgumentError, "token must be a String" unless token.is_a?(String)
           raise ArgumentError, "payload_io must respond to #read" unless payload_io.respond_to?(:read)
 
-          encoded_header, encoded_payload, encoded_signature = token.split(".", -1)
-          return false unless encoded_header && encoded_payload == "" && encoded_signature
+          parts = token.split(".", -1)
+          return false unless parts.length == 3
+
+          encoded_header, encoded_payload, encoded_signature = parts
+          return false unless encoded_payload == ""
 
           header = JSON.parse(Base64.urlsafe_decode64(encoded_header))
+          return false unless header.is_a?(Hash)
           return false unless header["alg"] == alg
 
           signature = Base64.urlsafe_decode64(encoded_signature)
+          return false unless signature_length_valid?(signature)
+
           signing_input = DetachedSigningInputIO.new(encoded_header, payload_io, chunk_size: chunk_size)
-          verified = verification_key.verify_io(signing_input, signature, chunk_size: chunk_size, context: EMPTY_CONTEXT)
+          verified = verification_key.verify_io(
+            signing_input,
+            signature,
+            chunk_size: chunk_size,
+            context: PQCrypto::JWT::JWA::EMPTY_CONTEXT
+          )
           return false unless verified
 
           [payload_position(payload_io), header]
-        rescue JSON::ParserError, ArgumentError, PQCrypto::InvalidKeyError
+        rescue JSON::ParserError, ArgumentError, PQCrypto::InvalidKeyError, PQCrypto::JWT::Error
           false
         end
 
@@ -89,17 +104,36 @@ module PQCrypto
         end
 
         def read(length = nil, outbuf = nil)
-          length ||= @chunk_size
-          fill(length)
-          return nil if @buffer.empty?
+          if length.nil?
+            fill_until_eof
+            return nil if @buffer.empty?
 
-          result = @buffer.byteslice(0, length)
-          @buffer = @buffer.byteslice(result.bytesize..-1) || +""
+            result = @buffer
+            @buffer = +""
+          else
+            raise ArgumentError, "negative length #{length} given" if length.negative?
+            return replace_outbuf(outbuf, +"") if length.zero?
+
+            fill(length)
+            return nil if @buffer.empty?
+
+            result = @buffer.byteslice(0, length)
+            @buffer = @buffer.byteslice(result.bytesize..-1) || +""
+          end
+
+          replace_outbuf(outbuf, result)
+        end
+
+        private
+
+        def replace_outbuf(outbuf, result)
           outbuf&.replace(result)
           outbuf || result
         end
 
-        private
+        def fill_until_eof
+          fill(@chunk_size) until @payload_done
+        end
 
         def fill(length)
           @buffer << @prefix unless consume_prefix?

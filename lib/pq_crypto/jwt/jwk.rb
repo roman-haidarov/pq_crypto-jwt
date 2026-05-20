@@ -10,35 +10,76 @@ module PQCrypto
       module_function
 
       KTY = "AKP".freeze
+      PRIVATE_EXPORT_OPTIONS = [:private, :include_private].freeze
 
-      def from_public_key(public_key, kid: nil)
+      def from_public_key(public_key, kid: nil, use: nil, key_ops: nil)
         validate_public_key!(public_key)
-        base_public_jwk(public_key.algorithm, public_key.to_bytes, kid: kid).freeze
+        base_public_jwk(public_key.algorithm, public_key.to_bytes, kid: kid, use: use, key_ops: key_ops).freeze
       end
 
-      def from_secret_key(*, **)
-        raise PQCrypto::JWT::UnsupportedAlgorithm,
-              "Private AKP JWK export is not supported in the first release; use PEM/PKCS#8 for signing keys"
+      # RFC 9964 private AKP JWK uses the 32-byte ML-DSA seed in `priv`, not an expanded secret key.
+      # The public key is required by JWK, so current pq_crypto 0.6.x callers must pass it until
+      # pq_crypto exposes Signature.keypair_from_seed/public_key_from_seed as public API.
+      def from_seed(seed, alg:, kid: nil, public_key: nil, use: nil, key_ops: nil)
+        algorithm = pq_algorithm_from_jose!(alg)
+        seed_bytes = validate_seed!(seed, algorithm)
+        public_key ||= public_key_from_seed_if_supported(algorithm, seed_bytes)
+        unless public_key
+          raise PQCrypto::JWT::UnsupportedFeature,
+                "AKP JWK export from seed requires pq_crypto public_key_from_seed/keypair_from_seed or public_key:"
+        end
+
+        validate_public_key!(public_key)
+        unless public_key.algorithm == algorithm
+          raise PQCrypto::JWT::KeyTypeError,
+                "public_key algorithm mismatch: expected #{algorithm.inspect}, got #{public_key.algorithm.inspect}"
+        end
+
+        jwk = base_public_jwk(algorithm, public_key.to_bytes, kid: kid, use: use, key_ops: key_ops)
+        jwk["priv"] = base64url(seed_bytes)
+        jwk.freeze
+      end
+
+      def from_secret_key(secret_key, kid: nil, public_key: nil, use: nil, key_ops: nil)
+        if secret_key.is_a?(PQCrypto::Signature::Keypair)
+          public_key ||= secret_key.public_key
+          secret_key = secret_key.secret_key
+        end
+
+        validate_secret_key!(secret_key)
+        seed = seed_from_secret_key(secret_key)
+        from_seed(seed, alg: alg_for_algorithm!(secret_key.algorithm), kid: kid, public_key: public_key, use: use, key_ops: key_ops)
       end
 
       def public_key_from_jwk(hash)
         jwk = normalize_hash!(hash)
-        reject_private_material!(jwk)
         algorithm = algorithm_from_jwk!(jwk)
         public_bytes = decode_required_key_bytes!(jwk, "pub", algorithm, :public_key_bytes)
         PQCrypto::Signature.public_key_from_bytes(algorithm, public_bytes)
-      rescue ArgumentError => e
+      rescue ArgumentError, PQCrypto::Error => e
         raise PQCrypto::JWT::Error, e.message
       end
 
-      def secret_key_from_jwk(*)
-        raise PQCrypto::JWT::UnsupportedAlgorithm,
-              "Private AKP JWK import is not supported in the first release; use PEM/PKCS#8 for signing keys"
+      def secret_key_from_jwk(hash)
+        jwk = normalize_hash!(hash)
+        algorithm = algorithm_from_jwk!(jwk)
+        decode_required_key_bytes!(jwk, "pub", algorithm, :public_key_bytes)
+        seed = decode_required_seed!(jwk, algorithm)
+
+        if (derived_public = public_key_from_seed_if_supported(algorithm, seed))
+          imported_public = public_key_from_jwk(jwk)
+          unless imported_public.to_bytes == derived_public.to_bytes
+            raise PQCrypto::JWT::Error, "AKP JWK pub does not match priv seed"
+          end
+        end
+
+        PQCrypto::Signature.secret_key_from_seed(algorithm, seed)
+      rescue ArgumentError, PQCrypto::Error => e
+        raise PQCrypto::JWT::Error, e.message
       end
 
       def thumbprint(jwk_hash)
         jwk = normalize_hash!(jwk_hash)
-        reject_private_material!(jwk)
         algorithm_from_jwk!(jwk)
         raise PQCrypto::JWT::Error, "JWK pub is required" unless jwk.key?("pub")
 
@@ -51,7 +92,9 @@ module PQCrypto
       end
 
       def base64url_decode(value)
-        Base64.urlsafe_decode64(String(value))
+        raw = String(value)
+        padding = (4 - raw.bytesize % 4) % 4
+        Base64.urlsafe_decode64(raw + ("=" * padding))
       rescue ArgumentError => e
         raise PQCrypto::JWT::Error, "Invalid base64url value: #{e.message}"
       end
@@ -66,26 +109,23 @@ module PQCrypto
         end
       end
 
-      def reject_private_material!(jwk)
-        return unless jwk.key?("priv")
-
-        raise PQCrypto::JWT::UnsupportedAlgorithm,
-              "Private AKP JWK material is not supported in the first release"
-      end
-      private_class_method :reject_private_material!
-
       def algorithm_from_jwk!(jwk)
         unless jwk.fetch("kty", nil) == KTY
           raise PQCrypto::JWT::Error, "Unsupported JWK kty: #{jwk.fetch('kty', nil).inspect}"
         end
 
         alg = jwk.fetch("alg", nil)
+        pq_algorithm_from_jose!(alg)
+      end
+
+      def pq_algorithm_from_jose!(alg)
         algorithm = PQCrypto::JWT.algorithm_for(alg)
         raise PQCrypto::JWT::UnsupportedAlgorithm, "Unsupported JWK alg: #{alg.inspect}" unless algorithm
         raise PQCrypto::JWT::UnsupportedAlgorithm, "Unsupported JWK alg: #{alg.inspect}" unless algorithm.key_kind == :signature
 
         algorithm.pq_crypto_algorithm
       end
+      private_class_method :pq_algorithm_from_jose!
 
       def alg_for_algorithm!(algorithm)
         match = PQCrypto::JWT.signing_algorithms.find { |candidate| candidate.pq_crypto_algorithm == algorithm }
@@ -94,13 +134,15 @@ module PQCrypto
         match.alg
       end
 
-      def base_public_jwk(algorithm, public_bytes, kid: nil)
+      def base_public_jwk(algorithm, public_bytes, kid: nil, use: nil, key_ops: nil)
         jwk = {
           "kty" => KTY,
           "alg" => alg_for_algorithm!(algorithm),
           "pub" => base64url(public_bytes),
         }
         jwk["kid"] = String(kid) unless kid.nil?
+        jwk["use"] = String(use) unless use.nil?
+        jwk["key_ops"] = Array(key_ops).map(&:to_s) unless key_ops.nil?
         jwk
       end
       private_class_method :base_public_jwk
@@ -120,6 +162,34 @@ module PQCrypto
       end
       private_class_method :decode_required_key_bytes!
 
+      def decode_required_seed!(jwk, algorithm)
+        raise PQCrypto::JWT::Error, "JWK priv is required" unless jwk.key?("priv")
+
+        seed = base64url_decode(jwk.fetch("priv"))
+        validate_seed!(seed, algorithm)
+      end
+      private_class_method :decode_required_seed!
+
+      def validate_seed!(seed, algorithm)
+        bytes = String(seed).b
+        expected = seed_bytes_for(algorithm)
+        unless bytes.bytesize == expected
+          raise PQCrypto::JWT::Error,
+                "Invalid priv seed length for #{algorithm.inspect}: expected #{expected}, got #{bytes.bytesize}"
+        end
+        bytes
+      end
+      private_class_method :validate_seed!
+
+      def seed_bytes_for(_algorithm)
+        if defined?(PQCrypto::PKCS8::ML_DSA_SEED_BYTES)
+          PQCrypto::PKCS8::ML_DSA_SEED_BYTES
+        else
+          32
+        end
+      end
+      private_class_method :seed_bytes_for
+
       def validate_public_key!(public_key)
         unless public_key.is_a?(PQCrypto::Signature::PublicKey)
           raise PQCrypto::JWT::KeyTypeError, "Expected PQCrypto::Signature::PublicKey"
@@ -129,12 +199,57 @@ module PQCrypto
       end
       private_class_method :validate_public_key!
 
+      def validate_secret_key!(secret_key)
+        unless secret_key.is_a?(PQCrypto::Signature::SecretKey)
+          raise PQCrypto::JWT::KeyTypeError, "Expected PQCrypto::Signature::SecretKey"
+        end
+
+        validate_algorithm!(secret_key.algorithm)
+      end
+      private_class_method :validate_secret_key!
+
       def validate_algorithm!(algorithm)
         return if PQCrypto::JWT.signing_algorithms.any? { |candidate| candidate.pq_crypto_algorithm == algorithm }
 
         raise PQCrypto::JWT::KeyTypeError, "Unsupported signature algorithm: #{algorithm.inspect}"
       end
       private_class_method :validate_algorithm!
+
+      def seed_from_secret_key(secret_key)
+        if secret_key.respond_to?(:to_seed)
+          return validate_seed!(secret_key.to_seed, secret_key.algorithm)
+        end
+
+        if secret_key.respond_to?(:seed?) && !secret_key.seed?
+          raise PQCrypto::JWT::UnsupportedFeature,
+                "SecretKey was not created from a seed; cannot export RFC 9964 AKP JWK"
+        end
+
+        # Compatibility bridge for pq_crypto 0.6.1: seed material is tracked internally
+        # for seed-aware PKCS#8, but public #to_seed/#seed? are not exposed yet.
+        if secret_key.instance_variable_defined?(:@seed)
+          seed = secret_key.instance_variable_get(:@seed)
+          return validate_seed!(seed, secret_key.algorithm) if seed
+        end
+
+        raise PQCrypto::JWT::UnsupportedFeature,
+              "SecretKey seed material is unavailable; cannot export RFC 9964 AKP JWK"
+      end
+      private_class_method :seed_from_secret_key
+
+      def public_key_from_seed_if_supported(algorithm, seed)
+        if PQCrypto::Signature.respond_to?(:public_key_from_seed)
+          return PQCrypto::Signature.public_key_from_seed(algorithm, seed)
+        end
+
+        if PQCrypto::Signature.respond_to?(:keypair_from_seed)
+          keypair = PQCrypto::Signature.keypair_from_seed(algorithm, seed)
+          return keypair.public_key
+        end
+
+        nil
+      end
+      private_class_method :public_key_from_seed_if_supported
     end
   end
 end

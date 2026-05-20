@@ -25,6 +25,13 @@ class TestHardConstraints < Minitest::Test
     assert_match(/spec\.extensions\s*=\s*\[\]/, gemspec)
   end
 
+  def test_runtime_dependencies_track_current_parent_line
+    gemspec = File.read(File.expand_path("../pq_crypto-jwt.gemspec", __dir__))
+
+    assert_match(/spec\.add_dependency\s+"pq_crypto",\s+"~> 0\.6\.1"/, gemspec)
+    assert_match(/spec\.add_dependency\s+"jwt",\s+">= 3\.1",\s+"< 4\.0"/, gemspec)
+  end
+
   def test_lib_avoids_private_pq_crypto_api
     lib_files = Dir[File.expand_path("../lib/**/*.rb", __dir__)]
 

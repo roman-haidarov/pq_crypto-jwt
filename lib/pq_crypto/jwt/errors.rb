@@ -4,6 +4,7 @@ module PQCrypto
   module JWT
     class Error < StandardError; end
     class UnsupportedAlgorithm < Error; end
+    class UnsupportedFeature < Error; end
     class KeyTypeError < Error; end
   end
 end

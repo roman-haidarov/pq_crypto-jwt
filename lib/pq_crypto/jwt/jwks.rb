@@ -5,6 +5,8 @@ module PQCrypto
     module JWKS
       module_function
 
+      CACHE_EMPTY = Object.new.freeze
+
       def from_keys(public_keys, kids: nil)
         keys = Array(public_keys).each_with_index.map do |public_key, index|
           kid = kids&.fetch(index, nil)
@@ -13,23 +15,32 @@ module PQCrypto
         { "keys" => keys }.freeze
       end
 
-      def find(jwks, kid: nil, alg: nil)
+      def find(jwks, kid: nil, alg: nil, thumbprint: nil)
         keys_from(jwks).find do |key|
           (kid.nil? || value_for(key, "kid") == kid) &&
-            (alg.nil? || value_for(key, "alg") == alg)
+            (alg.nil? || value_for(key, "alg") == alg) &&
+            (thumbprint.nil? || PQCrypto::JWT::JWK.thumbprint(key) == thumbprint)
+        end
+      end
+
+      def find_all(jwks, kid: nil, alg: nil, thumbprint: nil)
+        keys_from(jwks).select do |key|
+          (kid.nil? || value_for(key, "kid") == kid) &&
+            (alg.nil? || value_for(key, "alg") == alg) &&
+            (thumbprint.nil? || PQCrypto::JWT::JWK.thumbprint(key) == thumbprint)
         end
       end
 
       def loader(jwks_hash_or_callable)
-        cached = nil
+        cached = CACHE_EMPTY
         lambda do |options = {}|
-          if jwks_hash_or_callable.respond_to?(:call)
-            cached = nil if options && options[:invalidate]
-            cached ||= jwks_hash_or_callable.call(options || {})
-          else
-            cached = nil if options && options[:invalidate]
-            cached ||= jwks_hash_or_callable
+          options ||= {}
+          cached = CACHE_EMPTY if options[:invalidate]
+
+          if cached.equal?(CACHE_EMPTY)
+            cached = jwks_hash_or_callable.respond_to?(:call) ? jwks_hash_or_callable.call(options) : jwks_hash_or_callable
           end
+          cached
         end
       end
 
