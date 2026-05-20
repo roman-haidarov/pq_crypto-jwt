@@ -5,7 +5,6 @@
 ### Changed
 
 - Retargeted the adapter to the current parent line: `pq_crypto ~> 0.6.1`.
-- Raised the Ruby floor to `>= 3.2.0` and refactored internal request/config objects to `Data.define` value objects.
 - Updated documentation and release language from draft-era ML-DSA JOSE wording to RFC 9964 terminology.
 - Explicitly pass the RFC 9964 empty ML-DSA context in all one-shot and streaming sign/verify paths.
 - Streaming detached JWS now applies to `ML-DSA-44`, `ML-DSA-65`, and `ML-DSA-87` instead of only `ML-DSA-65`.

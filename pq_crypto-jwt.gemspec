@@ -16,7 +16,7 @@ Gem::Specification.new do |spec|
     "changelog_uri" => "https://github.com/roman-haidarov/pq_crypto-jwt/blob/v#{PQCrypto::JWT::VERSION}/CHANGELOG.md",
     "bug_tracker_uri" => "https://github.com/roman-haidarov/pq_crypto-jwt/issues"
   }
-  spec.required_ruby_version = ">= 3.2.0"
+  spec.required_ruby_version = ">= 3.1.0"
 
   spec.files = Dir["lib/**/*.rb", "README.md", "CHANGELOG.md", "LICENSE.txt"]
   spec.require_paths = ["lib"]

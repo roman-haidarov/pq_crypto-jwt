@@ -7,31 +7,6 @@ module PQCrypto
 
       EXPECT_VALUES = [:auto, :signature].freeze
       LOAD_ERRORS = [PQCrypto::Error, ArgumentError].freeze
-      LoaderSet = Data.define(:auto, :signature)
-
-      KEY_LOADERS = {
-        public_pem: LoaderSet.new(
-          auto: ->(input, _) { PQCrypto::Key.from_pem(input) },
-          signature: ->(input, _) { PQCrypto::Signature.public_key_from_spki_pem(input) }
-        ),
-        public_der: LoaderSet.new(
-          auto: ->(input, _) { PQCrypto::Key.from_der(input) },
-          signature: ->(input, _) { PQCrypto::Signature.public_key_from_spki_der(input) }
-        ),
-        secret_pem: LoaderSet.new(
-          auto: ->(input, passphrase) { PQCrypto::Key.from_pem(input, passphrase: passphrase) },
-          signature: ->(input, passphrase) { PQCrypto::Signature.secret_key_from_pkcs8_pem(input, passphrase: passphrase) }
-        ),
-        secret_der: LoaderSet.new(
-          auto: ->(input, passphrase) { PQCrypto::Key.from_der(input, passphrase: passphrase) },
-          signature: ->(input, passphrase) { PQCrypto::Signature.secret_key_from_pkcs8_der(input, passphrase: passphrase) }
-        )
-      }.freeze
-
-      ENSURE_KEY_KIND = {
-        public: ->(key) { ensure_signature_public_key!(key) },
-        secret: ->(key) { ensure_signature_secret_key!(key) }
-      }.freeze
 
       def generate(alg)
         algorithm = PQCrypto::JWT.algorithm_for(alg)
@@ -42,29 +17,36 @@ module PQCrypto
       end
 
       def public_from_pem(pem, expect: :auto)
-        load_key(:public_pem, :public, pem, expect: expect)
-      end
-
-      def public_from_der(der, expect: :auto)
-        load_key(:public_der, :public, der, expect: expect)
-      end
-
-      def secret_from_pem(pem, expect: :auto, passphrase: nil)
-        load_key(:secret_pem, :secret, pem, expect: expect, passphrase: passphrase)
-      end
-
-      def secret_from_der(der, expect: :auto, passphrase: nil)
-        load_key(:secret_der, :secret, der, expect: expect, passphrase: passphrase)
-      end
-
-      def load_key(loader_key, key_kind, input, expect:, passphrase: nil)
         validate_expect!(expect)
-        loader = KEY_LOADERS.fetch(loader_key).public_send(expect)
-        ENSURE_KEY_KIND.fetch(key_kind).call(loader.call(input, passphrase))
+        key = expect == :signature ? PQCrypto::Signature.public_key_from_spki_pem(pem) : PQCrypto::Key.from_pem(pem)
+        as_public!(key)
       rescue *LOAD_ERRORS => e
         raise PQCrypto::JWT::Error, e.message
       end
-      private_class_method :load_key
+
+      def public_from_der(der, expect: :auto)
+        validate_expect!(expect)
+        key = expect == :signature ? PQCrypto::Signature.public_key_from_spki_der(der) : PQCrypto::Key.from_der(der)
+        as_public!(key)
+      rescue *LOAD_ERRORS => e
+        raise PQCrypto::JWT::Error, e.message
+      end
+
+      def secret_from_pem(pem, expect: :auto, passphrase: nil)
+        validate_expect!(expect)
+        key = expect == :signature ? PQCrypto::Signature.secret_key_from_pkcs8_pem(pem, passphrase: passphrase) : PQCrypto::Key.from_pem(pem, passphrase: passphrase)
+        as_secret!(key)
+      rescue *LOAD_ERRORS => e
+        raise PQCrypto::JWT::Error, e.message
+      end
+
+      def secret_from_der(der, expect: :auto, passphrase: nil)
+        validate_expect!(expect)
+        key = expect == :signature ? PQCrypto::Signature.secret_key_from_pkcs8_der(der, passphrase: passphrase) : PQCrypto::Key.from_der(der, passphrase: passphrase)
+        as_secret!(key)
+      rescue *LOAD_ERRORS => e
+        raise PQCrypto::JWT::Error, e.message
+      end
 
       def validate_expect!(expect)
         return if EXPECT_VALUES.include?(expect)
@@ -73,19 +55,19 @@ module PQCrypto
       end
       private_class_method :validate_expect!
 
-      def ensure_signature_public_key!(key)
+      def as_public!(key)
         return key if key.is_a?(PQCrypto::Signature::PublicKey)
 
         raise PQCrypto::JWT::KeyTypeError, "Expected PQCrypto::Signature::PublicKey, got #{key.class}"
       end
-      private_class_method :ensure_signature_public_key!
+      private_class_method :as_public!
 
-      def ensure_signature_secret_key!(key)
+      def as_secret!(key)
         return key if key.is_a?(PQCrypto::Signature::SecretKey)
 
         raise PQCrypto::JWT::KeyTypeError, "Expected PQCrypto::Signature::SecretKey, got #{key.class}"
       end
-      private_class_method :ensure_signature_secret_key!
+      private_class_method :as_secret!
     end
   end
 end

@@ -21,57 +21,28 @@ module PQCrypto
     MLDSA65 = JWA::MLDSA65
     MLDSA87 = JWA::MLDSA87
 
-    RegistrationStep = Data.define(:action)
-
     SIGNING_ALGORITHMS = [JWA::MLDSA44, JWA::MLDSA65, JWA::MLDSA87].freeze
     KEM_ALGORITHMS = [].freeze
-    ALGORITHMS = SIGNING_ALGORITHMS
-    ALGORITHMS_BY_JOSE = ALGORITHMS.to_h { |algorithm| [algorithm.alg, algorithm] }.freeze
-    REGISTRATION_STEPS = [
-      RegistrationStep.new(-> { SIGNING_ALGORITHMS.each { |algorithm| ::JWT::JWA.register_algorithm(algorithm) } }),
-      RegistrationStep.new(-> { ensure_akp_jwk_registered! })
-    ].freeze
+    ALGORITHMS_BY_JOSE = SIGNING_ALGORITHMS.to_h { |algorithm| [algorithm.alg, algorithm] }.freeze
+
+    REGISTRATION_MUTEX = Monitor.new
 
     class << self
-      def algorithms
-        ALGORITHMS
-      end
-
-      def signing_algorithms
-        SIGNING_ALGORITHMS
-      end
-
-      def kem_algorithms
-        KEM_ALGORITHMS
-      end
-
-      def algorithm_for(alg_string)
-        ALGORITHMS_BY_JOSE[alg_string]
-      end
+      def algorithms = SIGNING_ALGORITHMS
+      def signing_algorithms = SIGNING_ALGORITHMS
+      def kem_algorithms = KEM_ALGORITHMS
+      def algorithm_for(alg_string) = ALGORITHMS_BY_JOSE[alg_string]
+      def registered? = @registered == true
 
       def register!
-        registration_monitor.synchronize do
+        REGISTRATION_MUTEX.synchronize do
           return true if registered?
 
-          REGISTRATION_STEPS.each { |step| instance_exec(&step.action) }
+          SIGNING_ALGORITHMS.each { |algorithm| ::JWT::JWA.register_algorithm(algorithm) }
+          ::JWT::JWK.classes << ::JWT::JWK::AKP unless ::JWT::JWK.classes.include?(::JWT::JWK::AKP)
           @registered = true
         end
         true
-      end
-
-      def registered?
-        @registered == true
-      end
-
-      private
-
-      def registration_monitor
-        @registration_monitor ||= Monitor.new
-      end
-
-      def ensure_akp_jwk_registered!
-        classes = ::JWT::JWK.classes
-        classes << ::JWT::JWK::AKP unless classes.include?(::JWT::JWK::AKP)
       end
     end
   end
