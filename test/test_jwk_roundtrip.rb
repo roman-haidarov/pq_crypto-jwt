@@ -61,6 +61,28 @@ class TestJWKRoundtrip < Minitest::Test
     assert_equal PQCrypto::JWT::JWK.base64url(seed), jwk.fetch("priv")
   end
 
+  def test_private_key_jwk_import_without_public_verification_trusts_metadata
+    keypair = PQCrypto::JWT::Keys.generate("ML-DSA-65")
+    jwk = PQCrypto::JWT::JWK.from_public_key(keypair.public_key).merge("priv" => PQCrypto::JWT::JWK.base64url("z" * 32))
+
+    secret_key = PQCrypto::JWT::JWK.secret_key_from_jwk(jwk, verify_public: false)
+
+    assert_instance_of PQCrypto::Signature::SecretKey, secret_key
+    assert_equal :ml_dsa_65, secret_key.algorithm
+  end
+
+  def test_private_key_jwk_import_strict_public_check_rejects_mismatch_when_parent_derivation_exists
+    skip "pq_crypto does not expose public seed derivation" unless PQCrypto::Signature.respond_to?(:public_key_from_seed) || PQCrypto::Signature.respond_to?(:keypair_from_seed)
+
+    seed = "z" * 32
+    mismatched_keypair = PQCrypto::JWT::Keys.generate("ML-DSA-65")
+    jwk = PQCrypto::JWT::JWK.from_public_key(mismatched_keypair.public_key).merge("priv" => PQCrypto::JWT::JWK.base64url(seed))
+
+    assert_raises(PQCrypto::JWT::Error) do
+      PQCrypto::JWT::JWK.secret_key_from_jwk(jwk, verify_public: true)
+    end
+  end
+
   def test_private_key_jwk_import_from_seed
     keypair = PQCrypto::JWT::Keys.generate("ML-DSA-65")
     seed = "z" * 32

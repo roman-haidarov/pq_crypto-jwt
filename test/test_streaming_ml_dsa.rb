@@ -33,11 +33,81 @@ class TestStreamingMLDSA < Minitest::Test
                                                  payload_io: StringIO.new(flip_byte(payload)))
   end
 
+  def test_streaming_sign_rejects_b64_header
+    keypair = PQCrypto::JWT::Keys.generate("ML-DSA-65")
+
+    assert_raises(ArgumentError) do
+      PQCrypto::JWT::JWA::MLDSA65.sign_io(signing_key: keypair.secret_key,
+                                          payload_io: StringIO.new("payload"),
+                                          header_fields: { b64: false })
+    end
+  end
+
+  def test_streaming_sign_rejects_crit_header
+    keypair = PQCrypto::JWT::Keys.generate("ML-DSA-65")
+
+    assert_raises(ArgumentError) do
+      PQCrypto::JWT::JWA::MLDSA65.sign_io(signing_key: keypair.secret_key,
+                                          payload_io: StringIO.new("payload"),
+                                          header_fields: { "crit" => ["b64"] })
+    end
+  end
+
+  def test_streaming_sign_rejects_non_positive_chunk_size
+    keypair = PQCrypto::JWT::Keys.generate("ML-DSA-65")
+
+    assert_raises(ArgumentError) do
+      PQCrypto::JWT::JWA::MLDSA65.sign_io(signing_key: keypair.secret_key,
+                                          payload_io: StringIO.new("payload"),
+                                          chunk_size: 0)
+    end
+  end
+
+  def test_streaming_verify_rejects_non_positive_chunk_size
+    keypair = PQCrypto::JWT::Keys.generate("ML-DSA-65")
+    token = PQCrypto::JWT::JWA::MLDSA65.sign_io(signing_key: keypair.secret_key, payload_io: StringIO.new("payload"))
+
+    refute PQCrypto::JWT::JWA::MLDSA65.verify_io(verification_key: keypair.public_key,
+                                                 token: token,
+                                                 payload_io: StringIO.new("payload"),
+                                                 chunk_size: 0)
+  end
+
+  def test_streaming_verify_rejects_critical_header_even_with_valid_signature
+    keypair = PQCrypto::JWT::Keys.generate("ML-DSA-65")
+    token = detached_token_for_header(keypair.secret_key, { "alg" => "ML-DSA-65", "crit" => ["b64"] }, "payload")
+
+    refute PQCrypto::JWT::JWA::MLDSA65.verify_io(verification_key: keypair.public_key,
+                                                 token: token,
+                                                 payload_io: StringIO.new("payload"))
+  end
+
+  def test_streaming_verify_rejects_unencoded_payload_header_even_with_valid_signature
+    keypair = PQCrypto::JWT::Keys.generate("ML-DSA-65")
+    token = detached_token_for_header(keypair.secret_key,
+                                      { "alg" => "ML-DSA-65", "b64" => false, "crit" => ["b64"] },
+                                      "payload")
+
+    refute PQCrypto::JWT::JWA::MLDSA65.verify_io(verification_key: keypair.public_key,
+                                                 token: token,
+                                                 payload_io: StringIO.new("payload"))
+  end
+
   def test_streaming_rejects_non_hash_header
     keypair = PQCrypto::JWT::Keys.generate("ML-DSA-65")
     header = Base64.urlsafe_encode64(JSON.generate([]), padding: false)
     signature = Base64.urlsafe_encode64("x" * PQCrypto::Signature.details(:ml_dsa_65).fetch(:signature_bytes), padding: false)
     token = "#{header}..#{signature}"
+
+    refute PQCrypto::JWT::JWA::MLDSA65.verify_io(verification_key: keypair.public_key,
+                                                 token: token,
+                                                 payload_io: StringIO.new("payload"))
+  end
+
+  def test_streaming_rejects_malformed_base64url_header
+    keypair = PQCrypto::JWT::Keys.generate("ML-DSA-65")
+    signature = Base64.urlsafe_encode64("x" * PQCrypto::Signature.details(:ml_dsa_65).fetch(:signature_bytes), padding: false)
+    token = "not valid ***..#{signature}"
 
     refute PQCrypto::JWT::JWA::MLDSA65.verify_io(verification_key: keypair.public_key,
                                                  token: token,
@@ -53,6 +123,14 @@ class TestStreamingMLDSA < Minitest::Test
                                                  payload_io: StringIO.new("payload"))
   end
 
+  def test_detached_signing_input_rejects_non_positive_chunk_size
+    encoded_header = Base64.urlsafe_encode64(JSON.generate("alg" => "ML-DSA-65"), padding: false)
+
+    assert_raises(ArgumentError) do
+      PQCrypto::JWT::JWA::DetachedSigningInputIO.new(encoded_header, StringIO.new("payload"), chunk_size: 0)
+    end
+  end
+
   def test_detached_signing_input_read_nil_reads_to_eof
     encoded_header = Base64.urlsafe_encode64(JSON.generate("alg" => "ML-DSA-65"), padding: false)
     io = PQCrypto::JWT::JWA::DetachedSigningInputIO.new(encoded_header, StringIO.new("payload"), chunk_size: 2)
@@ -61,5 +139,14 @@ class TestStreamingMLDSA < Minitest::Test
     expected = "#{encoded_header}.#{Base64.urlsafe_encode64('payload', padding: false)}"
     assert_equal expected, all
     assert_nil io.read
+  end
+
+  private
+
+  def detached_token_for_header(secret_key, header, payload)
+    encoded_header = Base64.urlsafe_encode64(JSON.generate(header), padding: false)
+    input = PQCrypto::JWT::JWA::DetachedSigningInputIO.new(encoded_header, StringIO.new(payload), chunk_size: 2)
+    signature = secret_key.sign_io(input, chunk_size: 2, context: PQCrypto::JWT::JWA::EMPTY_CONTEXT)
+    "#{encoded_header}..#{Base64.urlsafe_encode64(signature, padding: false)}"
   end
 end
