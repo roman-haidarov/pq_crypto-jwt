@@ -19,10 +19,12 @@ module PQCrypto
         def sign_io(signing_key:, payload_io: nil, io: nil, header_fields: {}, chunk_size: DEFAULT_CHUNK_SIZE)
           ensure_streaming!
           ensure_key!(signing_key, PQCrypto::Signature::SecretKey, "signing")
+          validate_chunk_size!(chunk_size)
           source = payload_io || io
           raise ArgumentError, "payload_io must respond to #read" unless source.respond_to?(:read)
 
-          encoded_header = base64url(JSON.generate(header_fields.transform_keys(&:to_s).merge("alg" => alg)))
+          header = normalize_signing_header!(header_fields).merge("alg" => alg)
+          encoded_header = base64url(JSON.generate(header))
           input = DetachedSigningInputIO.new(encoded_header, source, chunk_size: chunk_size)
           signature = signing_key.sign_io(input, chunk_size: chunk_size, context: EMPTY_CONTEXT)
           "#{encoded_header}..#{base64url(signature)}"
@@ -35,6 +37,7 @@ module PQCrypto
         def verify_io(verification_key:, token:, payload_io:, chunk_size: DEFAULT_CHUNK_SIZE)
           ensure_streaming!
           ensure_key!(verification_key, PQCrypto::Signature::PublicKey, "verification")
+          validate_chunk_size!(chunk_size)
           raise ArgumentError, "token must be a String" unless token.is_a?(String)
           raise ArgumentError, "payload_io must respond to #read" unless payload_io.respond_to?(:read)
 
@@ -42,7 +45,7 @@ module PQCrypto
           return false unless extra.nil? && encoded_payload == "" && encoded_signature
 
           header = JSON.parse(Base64.urlsafe_decode64(encoded_header))
-          return false unless header.is_a?(Hash) && header["alg"] == alg
+          return false unless supported_streaming_header?(header)
 
           signature = Base64.urlsafe_decode64(encoded_signature)
           return false unless signature_length_valid?(signature)
@@ -71,10 +74,42 @@ module PQCrypto
         def base64url(bytes)
           Base64.urlsafe_encode64(String(bytes).b, padding: false)
         end
+
+        def normalize_signing_header!(header_fields)
+          unless header_fields.respond_to?(:to_hash)
+            raise ArgumentError, "header_fields must be a Hash-like object"
+          end
+
+          header = header_fields.to_hash.each_with_object({}) { |(key, value), out| out[String(key)] = value }
+          unsupported = %w[b64 crit] & header.keys
+          unless unsupported.empty?
+            raise ArgumentError, "unsupported protected header#{unsupported.size == 1 ? '' : 's'}: #{unsupported.join(', ')}"
+          end
+
+          header
+        end
+
+        def supported_streaming_header?(header)
+          return false unless header.is_a?(Hash) && header["alg"] == alg
+          return false if header.key?("crit")
+          return false if header.key?("b64") && header["b64"] != true
+
+          true
+        end
+
+        def validate_chunk_size!(chunk_size)
+          return if chunk_size.is_a?(Integer) && chunk_size.positive?
+
+          raise ArgumentError, "chunk_size must be a positive Integer"
+        end
       end
 
       class DetachedSigningInputIO
         def initialize(encoded_header, payload_io, chunk_size: MLDSAStreaming::DEFAULT_CHUNK_SIZE)
+          unless chunk_size.is_a?(Integer) && chunk_size.positive?
+            raise ArgumentError, "chunk_size must be a positive Integer"
+          end
+
           @prefix = "#{encoded_header}.".b
           @payload_io = payload_io
           @chunk_size = chunk_size

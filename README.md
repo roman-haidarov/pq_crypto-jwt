@@ -113,7 +113,7 @@ Private AKP JWK uses RFC 9964 seed format: `priv` is the 32 raw-byte ML-DSA seed
 secret_key = PQCrypto::JWT::JWK.secret_key_from_jwk(private_jwk)
 ```
 
-With `pq_crypto 0.6.1`, private import trusts the JWK `pub` field as metadata because the parent gem does not expose public seed derivation yet. Callers that need a strict `pub`/`priv` consistency check can request it explicitly; this will raise `UnsupportedFeature` until the parent exposes `Signature.public_key_from_seed` or `Signature.keypair_from_seed`:
+With `pq_crypto 0.6.1`, private import trusts the JWK `pub` field as metadata because the parent gem does not expose public seed derivation yet. `secret_key_from_jwk` without `verify_public: true` is suitable only for trusted private JWK material. It does not prove that `pub` belongs to `priv`. Callers that need a strict `pub`/`priv` consistency check can request it explicitly; this will raise `UnsupportedFeature` until the parent exposes `Signature.public_key_from_seed` or `Signature.keypair_from_seed`:
 
 ```ruby
 secret_key = PQCrypto::JWT::JWK.secret_key_from_jwk(private_jwk, verify_public: true)
@@ -172,6 +172,8 @@ PQCrypto::JWT::JWA::MLDSA87
 ```
 
 `verify_io` returns `[payload_position, header]` on success. `payload_position` is `nil` for non-seekable streams that do not respond to `#pos`.
+
+The streaming helper signs the regular compact JWS signing input with a base64url-encoded payload. It does not implement RFC 7797 unencoded payload mode. `sign_io` rejects protected `b64` and `crit` header fields, and `verify_io` fails closed for critical headers or `b64: false`. `chunk_size` must be a positive integer.
 
 ## Non-goals
 

@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.2.1
+
+### Fixed
+
+- Streaming detached JWS signing now rejects protected `b64` and `crit` headers instead of allowing semantic mismatch with the base64url-encoded signing input.
+- Streaming detached JWS verification now fails closed for critical headers and `b64: false`.
+- Streaming `chunk_size` is now validated as a positive integer before signing, verification, or detached signing-input reads.
+- CI workflow now matches the documented release matrix for Ruby `3.1`, `3.2`, `3.3`, `3.4`, `4.0` crossed with `jwt ~> 3.1.0` and `jwt ~> 3.2.0`.
+
+### Added
+
+- Negative streaming tests for `crit`, `b64`, malformed base64url headers, and non-positive chunk sizes.
+- RFC 9964 regression tests for ML-DSA public key/signature sizes and AKP JWK thumbprint canonical members.
+- Explicit tests and documentation for trusted private AKP JWK import without `verify_public: true`.
+
 ## 0.2.0
 
 ### Changed
