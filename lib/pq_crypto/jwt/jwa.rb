@@ -6,40 +6,23 @@ require "pq_crypto"
 module PQCrypto
   module JWT
     module JWA
+      EMPTY_CONTEXT = "".b.freeze
+      VERIFY_ERRORS = [
+        PQCrypto::Error, PQCrypto::JWT::Error,
+        ::JWT::DecodeError, ::JWT::VerificationError, ::JWT::JWKError,
+        ArgumentError, TypeError, EncodingError
+      ].freeze
+
       module MLDSA
-        def valid_alg?(alg_to_validate)
-          alg_to_validate == alg
-        end
-
-        def pq_crypto_algorithm
-          self::PQ_CRYPTO_ALGORITHM
-        end
-
-        def streaming_supported?
-          false
-        end
-
-        def sign_io(**)
-          raise PQCrypto::JWT::UnsupportedAlgorithm, "#{alg} does not support streaming JWS"
-        end
-
-        def verify_io(**)
-          raise PQCrypto::JWT::UnsupportedAlgorithm, "#{alg} does not support streaming JWS"
-        end
-
-        def verify_io!(**)
-          raise PQCrypto::JWT::UnsupportedAlgorithm, "#{alg} does not support streaming JWS"
-        end
-
-        def key_kind
-          :signature
-        end
+        def valid_alg?(alg_to_validate) = alg_to_validate == alg
+        def pq_crypto_algorithm = self::PQ_CRYPTO_ALGORITHM
+        def key_kind = :signature
 
         def sign(data:, signing_key:)
-          ensure_secret_key!(signing_key)
+          ensure_key!(signing_key, PQCrypto::Signature::SecretKey, "signing")
           raise ArgumentError, "data must be a String" unless data.is_a?(String)
 
-          signing_key.sign(data.b)
+          signing_key.sign(data.b, context: EMPTY_CONTEXT)
         rescue PQCrypto::JWT::KeyTypeError, ArgumentError
           raise
         rescue StandardError => e
@@ -47,47 +30,33 @@ module PQCrypto
         end
 
         def verify(data:, signature:, verification_key:)
-          return false unless public_key_for_this_algorithm?(verification_key)
-          return false unless data.is_a?(String)
-          return false unless signature.is_a?(String)
+          return false unless verification_key.is_a?(PQCrypto::Signature::PublicKey)
+          return false unless verification_key.algorithm == pq_crypto_algorithm
+          return false unless data.is_a?(String) && signature.is_a?(String)
           return false unless signature_length_valid?(signature)
 
-          verification_key.verify(data.b, signature.b)
-        rescue PQCrypto::InvalidKeyError, PQCrypto::JWT::Error, ArgumentError
+          verification_key.verify(data.b, signature.b, context: EMPTY_CONTEXT)
+        rescue *VERIFY_ERRORS
           false
         end
 
         private
 
-        def ensure_secret_key!(key)
-          unless key.is_a?(PQCrypto::Signature::SecretKey)
-            raise PQCrypto::JWT::KeyTypeError,
-                  "#{alg} signing requires PQCrypto::Signature::SecretKey"
+        def ensure_key!(key, klass, role)
+          unless key.is_a?(klass)
+            raise PQCrypto::JWT::KeyTypeError, "#{alg} #{role} requires #{klass}"
           end
-
           return if key.algorithm == pq_crypto_algorithm
 
           raise PQCrypto::JWT::KeyTypeError,
-                "#{alg} signing requires #{pq_crypto_algorithm.inspect} key, got #{key.algorithm.inspect}"
-        end
-
-        def ensure_public_key!(key)
-          unless public_key_for_this_algorithm?(key)
-            raise PQCrypto::JWT::KeyTypeError,
-                  "#{alg} verification requires PQCrypto::Signature::PublicKey for #{pq_crypto_algorithm.inspect}"
-          end
-        end
-
-        def public_key_for_this_algorithm?(key)
-          key.is_a?(PQCrypto::Signature::PublicKey) && key.algorithm == pq_crypto_algorithm
+                "#{alg} #{role} requires #{pq_crypto_algorithm.inspect} key, got #{key.algorithm.inspect}"
         end
 
         def signature_length_valid?(signature)
-          details = PQCrypto::Signature.details(pq_crypto_algorithm)
-          expected = details[:signature_bytes] || details["signature_bytes"]
+          expected = PQCrypto::Signature.details(pq_crypto_algorithm)[:signature_bytes]
           expected.nil? || signature.bytesize == expected
-        rescue StandardError
-          true
+        rescue *VERIFY_ERRORS
+          false
         end
       end
     end

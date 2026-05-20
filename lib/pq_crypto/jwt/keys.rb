@@ -1,15 +1,12 @@
 # frozen_string_literal: true
 
-require "base64"
-require "openssl"
-require "set"
-
 module PQCrypto
   module JWT
     module Keys
       module_function
 
       EXPECT_VALUES = [:auto, :signature].freeze
+      LOAD_ERRORS = [PQCrypto::Error, ArgumentError].freeze
 
       def generate(alg)
         algorithm = PQCrypto::JWT.algorithm_for(alg)
@@ -21,16 +18,46 @@ module PQCrypto
 
       def public_from_pem(pem, expect: :auto)
         validate_expect!(expect)
-        return PQCrypto::Signature.public_key_from_spki_pem(pem) if expect == :signature
 
-        dispatch_public_from_pem(pem)
+        key = begin
+          expect == :signature ? PQCrypto::Signature.public_key_from_spki_pem(pem) : PQCrypto::Key.from_pem(pem)
+        rescue *LOAD_ERRORS => e
+          raise PQCrypto::JWT::Error, e.message
+        end
+        as_public!(key)
       end
 
-      def secret_from_pem(pem, expect: :auto)
+      def public_from_der(der, expect: :auto)
         validate_expect!(expect)
-        return PQCrypto::Signature.secret_key_from_pkcs8_pem(pem) if expect == :signature
 
-        dispatch_secret_from_pem(pem)
+        key = begin
+          expect == :signature ? PQCrypto::Signature.public_key_from_spki_der(der) : PQCrypto::Key.from_der(der)
+        rescue *LOAD_ERRORS => e
+          raise PQCrypto::JWT::Error, e.message
+        end
+        as_public!(key)
+      end
+
+      def secret_from_pem(pem, expect: :auto, passphrase: nil)
+        validate_expect!(expect)
+
+        key = begin
+          expect == :signature ? PQCrypto::Signature.secret_key_from_pkcs8_pem(pem, passphrase: passphrase) : PQCrypto::Key.from_pem(pem, passphrase: passphrase)
+        rescue *LOAD_ERRORS => e
+          raise PQCrypto::JWT::Error, e.message
+        end
+        as_secret!(key)
+      end
+
+      def secret_from_der(der, expect: :auto, passphrase: nil)
+        validate_expect!(expect)
+
+        key = begin
+          expect == :signature ? PQCrypto::Signature.secret_key_from_pkcs8_der(der, passphrase: passphrase) : PQCrypto::Key.from_der(der, passphrase: passphrase)
+        rescue *LOAD_ERRORS => e
+          raise PQCrypto::JWT::Error, e.message
+        end
+        as_secret!(key)
       end
 
       def validate_expect!(expect)
@@ -40,60 +67,19 @@ module PQCrypto
       end
       private_class_method :validate_expect!
 
-      def dispatch_public_from_pem(pem)
-        oid = spki_oid_from_pem(pem)
-        return PQCrypto::Signature.public_key_from_spki_pem(pem) if signature_oids.include?(oid.to_s)
+      def as_public!(key)
+        return key if key.is_a?(PQCrypto::Signature::PublicKey)
 
-        raise PQCrypto::JWT::Error, "Unknown or unsupported PQCrypto SPKI algorithm OID: #{oid.inspect}"
+        raise PQCrypto::JWT::KeyTypeError, "Expected PQCrypto::Signature::PublicKey, got #{key.class}"
       end
-      private_class_method :dispatch_public_from_pem
+      private_class_method :as_public!
 
-      def dispatch_secret_from_pem(pem)
-        oid = pkcs8_oid_from_pem(pem)
-        return PQCrypto::Signature.secret_key_from_pkcs8_pem(pem) if signature_oids.include?(oid.to_s)
+      def as_secret!(key)
+        return key if key.is_a?(PQCrypto::Signature::SecretKey)
 
-        raise PQCrypto::JWT::Error, "Unknown or unsupported PQCrypto PKCS#8 algorithm OID: #{oid.inspect}"
+        raise PQCrypto::JWT::KeyTypeError, "Expected PQCrypto::Signature::SecretKey, got #{key.class}"
       end
-      private_class_method :dispatch_secret_from_pem
-
-      def spki_oid_from_pem(pem)
-        sequence = OpenSSL::ASN1.decode(pem_to_der(pem))
-        sequence.value.fetch(0).value.fetch(0).oid
-      rescue StandardError => e
-        raise PQCrypto::JWT::Error, "Unable to read SPKI algorithm OID: #{e.message}"
-      end
-      private_class_method :spki_oid_from_pem
-
-      def pkcs8_oid_from_pem(pem)
-        sequence = OpenSSL::ASN1.decode(pem_to_der(pem))
-        sequence.value.fetch(1).value.fetch(0).oid
-      rescue StandardError => e
-        raise PQCrypto::JWT::Error, "Unable to read PKCS#8 algorithm OID: #{e.message}"
-      end
-      private_class_method :pkcs8_oid_from_pem
-
-      def pem_to_der(pem)
-        body = pem.to_s.lines.reject { |line| line.start_with?("-----") }.join
-        Base64.decode64(body)
-      end
-      private_class_method :pem_to_der
-
-      def signature_oids
-        @signature_oids ||= PQCrypto::JWT.signing_algorithms.filter_map do |algorithm|
-          oid_for_algorithm(algorithm.pq_crypto_algorithm)
-        end.to_set
-      end
-      private_class_method :signature_oids
-
-      def oid_for_algorithm(algorithm)
-        return unless PQCrypto.const_defined?(:AlgorithmRegistry)
-
-        oid = PQCrypto::AlgorithmRegistry.standard_oid(algorithm)
-        oid&.to_s
-      rescue StandardError
-        nil
-      end
-      private_class_method :oid_for_algorithm
+      private_class_method :as_secret!
     end
   end
 end
