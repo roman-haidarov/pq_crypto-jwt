@@ -8,7 +8,8 @@ module PQCrypto
     module JWA
       module MLDSAStreaming
         DEFAULT_CHUNK_SIZE = 1 << 20
-        STREAMING_ERRORS = [JSON::ParserError, ArgumentError, PQCrypto::Error, PQCrypto::JWT::Error, EncodingError].freeze
+        STREAMING_DECODE_ERRORS = [JSON::ParserError, ArgumentError, TypeError, EncodingError].freeze
+        STREAMING_VERIFY_ERRORS = [PQCrypto::Error, PQCrypto::JWT::Error].freeze
 
         def streaming_supported?
           PQCrypto::Signature.supported.include?(pq_crypto_algorithm)
@@ -34,28 +35,32 @@ module PQCrypto
           raise ::JWT::EncodeError, e.message
         end
 
-        def verify_io(verification_key:, token:, payload_io:, chunk_size: DEFAULT_CHUNK_SIZE)
+        def verify_io(verification_key:, token:, payload_io:, chunk_size: DEFAULT_CHUNK_SIZE, strict: false)
           ensure_streaming!
           ensure_key!(verification_key, PQCrypto::Signature::PublicKey, "verification")
           validate_chunk_size!(chunk_size)
-          raise ArgumentError, "token must be a String" unless token.is_a?(String)
-          raise ArgumentError, "payload_io must respond to #read" unless payload_io.respond_to?(:read)
+          return streaming_decode_failure!(strict, "token must be a String") unless token.is_a?(String)
+          return streaming_decode_failure!(strict, "payload_io must respond to #read") unless payload_io.respond_to?(:read)
 
           encoded_header, encoded_payload, encoded_signature, extra = token.split(".", -1)
-          return false unless extra.nil? && encoded_payload == "" && encoded_signature
+          unless extra.nil? && encoded_payload == "" && encoded_signature
+            return streaming_decode_failure!(strict, "compact detached JWS must have exactly three segments and an empty payload segment")
+          end
 
           header = JSON.parse(Base64.urlsafe_decode64(encoded_header))
-          return false unless supported_streaming_header?(header)
+          return streaming_decode_failure!(strict, "unsupported streaming JWS protected header") unless supported_streaming_header?(header)
 
           signature = Base64.urlsafe_decode64(encoded_signature)
-          return false unless signature_length_valid?(signature)
+          return streaming_verify_failure!(strict, "invalid #{alg} signature length") unless signature_length_valid?(signature)
 
           input = DetachedSigningInputIO.new(encoded_header, payload_io, chunk_size: chunk_size)
-          return false unless verification_key.verify_io(input, signature, chunk_size: chunk_size, context: EMPTY_CONTEXT)
+          return streaming_verify_failure!(strict, "Streaming JWS verification failed") unless verification_key.verify_io(input, signature, chunk_size: chunk_size, context: EMPTY_CONTEXT)
 
           [payload_io.respond_to?(:pos) ? payload_io.pos : nil, header]
-        rescue *STREAMING_ERRORS
-          false
+        rescue *STREAMING_DECODE_ERRORS => e
+          streaming_decode_failure!(strict, e.message)
+        rescue *STREAMING_VERIFY_ERRORS => e
+          streaming_verify_failure!(strict, e.message)
         end
 
         def verify_io!(**kwargs)
@@ -102,6 +107,18 @@ module PQCrypto
 
           raise ArgumentError, "chunk_size must be a positive Integer"
         end
+
+        def streaming_decode_failure!(strict, message)
+          raise ::JWT::DecodeError, message if strict
+
+          false
+        end
+
+        def streaming_verify_failure!(strict, message)
+          raise ::JWT::VerificationError, message if strict
+
+          false
+        end
       end
 
       class DetachedSigningInputIO
@@ -139,6 +156,17 @@ module PQCrypto
 
           replace_outbuf(outbuf, result)
         end
+
+        def readpartial(maxlen, outbuf = nil)
+          result = read(maxlen, outbuf)
+          raise EOFError if result.nil? || result.empty?
+
+          result
+        end
+
+        def binmode = self
+        def binmode? = true
+        def close = nil
 
         private
 

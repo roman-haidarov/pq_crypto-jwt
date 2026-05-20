@@ -12,6 +12,41 @@ class TestJWKSLookup < Minitest::Test
     assert_equal "kid-1", jwk.fetch("kid")
   end
 
+  def test_from_keys_rejects_mismatched_kids_length
+    keypair = PQCrypto::JWT::Keys.generate("ML-DSA-65")
+
+    assert_raises(ArgumentError) do
+      PQCrypto::JWT::JWKS.from_keys([keypair.public_key], kids: [])
+    end
+  end
+
+  def test_from_keys_supports_thumbprint_kid_strategy
+    keypair = PQCrypto::JWT::Keys.generate("ML-DSA-65")
+    jwks = PQCrypto::JWT::JWKS.from_keys([keypair.public_key], kid_strategy: :thumbprint)
+    jwk = jwks.fetch("keys").fetch(0)
+
+    assert_equal PQCrypto::JWT::JWK.thumbprint(jwk), jwk.fetch("kid")
+  end
+
+  def test_from_keys_supports_thumbprint_uri_kid_strategy
+    keypair = PQCrypto::JWT::Keys.generate("ML-DSA-65")
+    jwks = PQCrypto::JWT::JWKS.from_keys([keypair.public_key], kid_strategy: :thumbprint_uri)
+    jwk = jwks.fetch("keys").fetch(0)
+
+    assert_equal PQCrypto::JWT::JWK.thumbprint_uri(jwk), jwk.fetch("kid")
+  end
+
+  def test_find_ignores_structurally_invalid_keys
+    valid_keypair = PQCrypto::JWT::Keys.generate("ML-DSA-65")
+    invalid = { "kty" => "AKP", "pub" => "missing-alg" }
+    valid = PQCrypto::JWT::JWK.from_public_key(valid_keypair.public_key, kid: "valid")
+    jwks = { "keys" => [invalid, valid] }
+
+    jwk = PQCrypto::JWT::JWKS.find(jwks, kid: "valid")
+
+    assert_equal "valid", jwk.fetch("kid")
+  end
+
   def test_loader_refreshes_on_invalidate
     calls = 0
     loader = PQCrypto::JWT::JWKS.loader(lambda do |_options|

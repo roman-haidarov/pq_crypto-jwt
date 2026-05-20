@@ -11,6 +11,7 @@ module PQCrypto
 
       KTY = "AKP".freeze
       SEED_BYTES = defined?(PQCrypto::PKCS8::ML_DSA_SEED_BYTES) ? PQCrypto::PKCS8::ML_DSA_SEED_BYTES : 32
+      THUMBPRINT_URI_PREFIX = "urn:ietf:params:oauth:jwk-thumbprint:sha-256:".freeze
 
       def from_public_key(public_key, kid: nil, use: nil, key_ops: nil)
         validate_key!(public_key, PQCrypto::Signature::PublicKey)
@@ -72,11 +73,15 @@ module PQCrypto
 
       def thumbprint(jwk_hash)
         jwk = normalize_hash!(jwk_hash)
-        algorithm_from_jwk!(jwk)
-        raise PQCrypto::JWT::Error, "JWK pub is required" unless jwk.key?("pub")
+        algorithm = algorithm_from_jwk!(jwk)
+        decode_field!(jwk, "pub", algorithm)
 
         canonical = JSON.generate("alg" => jwk.fetch("alg"), "kty" => KTY, "pub" => jwk.fetch("pub"))
         base64url(Digest::SHA256.digest(canonical.b))
+      end
+
+      def thumbprint_uri(jwk_hash)
+        "#{THUMBPRINT_URI_PREFIX}#{thumbprint(jwk_hash)}"
       end
 
       def base64url(bytes)

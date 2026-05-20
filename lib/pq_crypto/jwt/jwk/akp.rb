@@ -19,7 +19,7 @@ module JWT
         params = params.is_a?(String) ? { kid: params } : (params || {})
         params = params.transform_keys(&:to_sym)
         key_params = extract_key_params(key)
-        @checked_public_key, @checked_secret_key = check_jwk_params!(key_params, params)
+        @checked_public_key = check_jwk_params!(key_params, params)
         super({ kid_generator: NullKidGenerator }.merge(options || {}), key_params.merge(params))
       end
 
@@ -35,7 +35,7 @@ module JWT
       def secret_key
         raise JWT::JWKError, "AKP JWK does not contain private material" unless private?
 
-        @secret_key ||= @checked_secret_key || PQCrypto::JWT::JWK.secret_key_from_jwk(string_export(include_private: true))
+        @secret_key ||= PQCrypto::JWT::JWK.secret_key_from_jwk(string_export(include_private: true))
       end
 
       def export(options = {})
@@ -80,6 +80,14 @@ module JWT
         raise JWT::JWKError, e.message
       end
 
+      def validate_private_seed_metadata!(jwk)
+        seed = PQCrypto::JWT::JWK.base64url_decode(jwk.fetch("priv") { raise PQCrypto::JWT::Error, "JWK priv is required" })
+        return if seed.bytesize == PQCrypto::JWT::JWK::SEED_BYTES
+
+        raise PQCrypto::JWT::Error,
+              "Invalid priv seed length for #{jwk.fetch('alg').inspect}: expected #{PQCrypto::JWT::JWK::SEED_BYTES}, got #{seed.bytesize}"
+      end
+
       def check_jwk_params!(key_params, params)
         raise ArgumentError, "cannot overwrite cryptographic key attributes" unless (AKP_KEY_ELEMENTS & params.keys).empty?
         raise JWT::JWKError, "Incorrect 'kty' value: #{key_params[:kty]}, expected #{KTY}" unless key_params[:kty] == KTY
@@ -88,10 +96,8 @@ module JWT
         raise JWT::JWKError, "Unsupported AKP JWK alg: #{key_params[:alg].inspect}" unless PQCrypto::JWT.algorithm_for(key_params[:alg])
 
         parsed = key_params.transform_keys(&:to_s)
-        [
-          PQCrypto::JWT::JWK.public_key_from_jwk(parsed),
-          key_params[:priv] ? PQCrypto::JWT::JWK.secret_key_from_jwk(parsed) : nil
-        ]
+        validate_private_seed_metadata!(parsed) if key_params.key?(:priv)
+        PQCrypto::JWT::JWK.public_key_from_jwk(parsed)
       rescue PQCrypto::JWT::Error => e
         raise JWT::JWKError, e.message
       end

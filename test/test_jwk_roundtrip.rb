@@ -18,6 +18,32 @@ class TestJWKRoundtrip < Minitest::Test
     refute jwk.key?("priv")
   end
 
+  def test_akp_jwk_does_not_expand_private_seed_on_initialize
+    keypair = PQCrypto::JWT::Keys.generate("ML-DSA-65")
+    jwk = PQCrypto::JWT::JWK.from_public_key(keypair.public_key).merge("priv" => PQCrypto::JWT::JWK.base64url("z" * 32))
+    original = PQCrypto::JWT::JWK.method(:secret_key_from_jwk)
+    called = false
+
+    PQCrypto::JWT::JWK.define_singleton_method(:secret_key_from_jwk) do |*_args, **_kwargs|
+      called = true
+      raise "secret key should be materialized lazily"
+    end
+
+    akp = JWT::JWK::AKP.new(jwk)
+
+    refute called
+    assert akp.private?
+  ensure
+    PQCrypto::JWT::JWK.define_singleton_method(:secret_key_from_jwk) { |*args, **kwargs| original.call(*args, **kwargs) } if original
+  end
+
+  def test_akp_jwk_rejects_invalid_private_seed_metadata_without_expansion
+    keypair = PQCrypto::JWT::Keys.generate("ML-DSA-65")
+    jwk = PQCrypto::JWT::JWK.from_public_key(keypair.public_key).merge("priv" => PQCrypto::JWT::JWK.base64url("x" * 31))
+
+    assert_raises(JWT::JWKError) { JWT::JWK::AKP.new(jwk) }
+  end
+
   def test_private_key_jwk_export_requires_seed_material
     keypair = PQCrypto::JWT::Keys.generate("ML-DSA-65")
 
