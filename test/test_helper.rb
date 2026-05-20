@@ -30,4 +30,16 @@ module PQCryptoJWTTestHelpers
     changed.setbyte(0, changed.getbyte(0) ^ 0x01)
     changed
   end
+
+  def with_stub(target, method_name, replacement)
+    singleton = target.singleton_class
+    had_own = singleton.method_defined?(method_name) || singleton.private_method_defined?(method_name)
+    original = had_own ? target.method(method_name) : nil
+
+    target.define_singleton_method(method_name, replacement)
+    yield
+  ensure
+    singleton.send(:remove_method, method_name) if singleton.method_defined?(method_name) || singleton.private_method_defined?(method_name)
+    target.define_singleton_method(method_name, original) if original
+  end
 end

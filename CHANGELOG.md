@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.2.2
+
+### Fixed
+
+- CI workflow now matches the documented release matrix for Ruby `3.1`, `3.2`, `3.3`, `3.4`, `4.0` crossed with `jwt ~> 3.1.0` and `jwt ~> 3.2.0`.
+- Renamed the synthetic RFC 9964 regression test file to `test_ml_dsa_sizes.rb`; it now describes size and canonical-thumbprint checks without implying full Appendix-vector coverage.
+- `JWT::JWK::AKP` no longer expands and retains private seed material during initialization; private key materialization is lazy and happens only when `#secret_key` / `#signing_key` is requested.
+- `JWKS.from_keys(kids:)` now raises `ArgumentError` when the number of kids does not match the number of public keys.
+- JWKS lookup now ignores structurally invalid AKP JWK entries instead of returning malformed keys from weak filters.
+- JWKS lookup now prefilters by `kid`/`alg` before reconstructing public keys and uses a bounded immutable validation cache for repeated lookups.
+- `JWKS.from_keys(kids:)` now normalizes Array-compatible `kids` objects through `to_ary` before indexing.
+- `JWK.thumbprint` now validates the AKP `pub` length for the declared ML-DSA algorithm before computing the digest.
+- `DetachedSigningInputIO` now implements `#readpartial`, `#binmode`, `#binmode?`, and `#close` for better IO compatibility.
+
+### Added
+
+- `PQCrypto::JWT::JWK.thumbprint_uri(jwk)` for RFC 9278-style JWK thumbprint URIs.
+- `PQCrypto::JWT::JWKS.from_keys(..., kid_strategy: :thumbprint)` and `kid_strategy: :thumbprint_uri` for automatic key IDs.
+- Optional `strict: true` mode for streaming detached JWS verification, raising `JWT::DecodeError` for structural/token errors and `JWT::VerificationError` for cryptographic verification failures.
+- Thread-safe cache invalidation for `JWKS.loader`.
+- Optional Node `jose` cross-implementation interop test for `ML-DSA-65`, wired as a dedicated CI job.
+
 ## 0.2.1
 
 ### Fixed
@@ -7,12 +29,11 @@
 - Streaming detached JWS signing now rejects protected `b64` and `crit` headers instead of allowing semantic mismatch with the base64url-encoded signing input.
 - Streaming detached JWS verification now fails closed for critical headers and `b64: false`.
 - Streaming `chunk_size` is now validated as a positive integer before signing, verification, or detached signing-input reads.
-- CI workflow now matches the documented release matrix for Ruby `3.1`, `3.2`, `3.3`, `3.4`, `4.0` crossed with `jwt ~> 3.1.0` and `jwt ~> 3.2.0`.
 
 ### Added
 
 - Negative streaming tests for `crit`, `b64`, malformed base64url headers, and non-positive chunk sizes.
-- RFC 9964 regression tests for ML-DSA public key/signature sizes and AKP JWK thumbprint canonical members.
+- Regression tests for ML-DSA public key/signature sizes and AKP JWK thumbprint canonical members.
 - Explicit tests and documentation for trusted private AKP JWK import without `verify_public: true`.
 
 ## 0.2.0
@@ -26,7 +47,7 @@
 - PEM/DER loading now delegates to `PQCrypto::Key.from_pem` / `PQCrypto::Key.from_der` for auto-dispatch instead of manually parsing ASN.1 OIDs in the JWT adapter.
 - `signature_length_valid?` now fails closed when signature metadata cannot be resolved.
 - `JWT::JWK.classes` is no longer mutated at require-time; AKP registration happens through `PQCrypto::JWT.register!`.
-- CI matrix now covers Ruby `3.1`, `3.2`, `3.3`, `3.4`, `4.0` crossed with `jwt ~> 3.1.0` and `jwt ~> 3.2.0`.
+- Documented the intended Ruby `3.1`, `3.2`, `3.3`, `3.4`, `4.0` and `jwt >= 3.1, < 4.0` compatibility target.
 
 ### Added
 

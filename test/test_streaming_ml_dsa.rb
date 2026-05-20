@@ -141,6 +141,42 @@ class TestStreamingMLDSA < Minitest::Test
     assert_nil io.read
   end
 
+  def test_streaming_verify_strict_raises_decode_error_for_malformed_token
+    keypair = PQCrypto::JWT::Keys.generate("ML-DSA-65")
+
+    assert_raises(JWT::DecodeError) do
+      PQCrypto::JWT::JWA::MLDSA65.verify_io(verification_key: keypair.public_key,
+                                            token: "not-a-detached-jws",
+                                            payload_io: StringIO.new("payload"),
+                                            strict: true)
+    end
+  end
+
+  def test_streaming_verify_strict_raises_verification_error_for_crypto_failure
+    keypair = PQCrypto::JWT::Keys.generate("ML-DSA-65")
+    payload = "payload"
+    token = PQCrypto::JWT::JWA::MLDSA65.sign_io(signing_key: keypair.secret_key, payload_io: StringIO.new(payload))
+
+    assert_raises(JWT::VerificationError) do
+      PQCrypto::JWT::JWA::MLDSA65.verify_io(verification_key: keypair.public_key,
+                                            token: token,
+                                            payload_io: StringIO.new(flip_byte(payload)),
+                                            strict: true)
+    end
+  end
+
+  def test_detached_signing_input_io_compatibility_methods
+    encoded_header = Base64.urlsafe_encode64(JSON.generate("alg" => "ML-DSA-65"), padding: false)
+    io = PQCrypto::JWT::JWA::DetachedSigningInputIO.new(encoded_header, StringIO.new("payload"), chunk_size: 2)
+
+    assert_same io, io.binmode
+    assert io.binmode?
+    assert_equal encoded_header.byteslice(0, 3), io.readpartial(3)
+    io.read until io.read.nil?
+    assert_raises(EOFError) { io.readpartial(1) }
+    assert_nil io.close
+  end
+
   private
 
   def detached_token_for_header(secret_key, header, payload)

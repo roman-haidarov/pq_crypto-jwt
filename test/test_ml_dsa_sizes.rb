@@ -2,7 +2,7 @@
 
 require_relative "test_helper"
 
-class TestRFC9964Vectors < Minitest::Test
+class TestMLDSASizes < Minitest::Test
   EXPECTED_SIZES = {
     "ML-DSA-44" => { public_key_bytes: 1_312, signature_bytes: 2_420 },
     "ML-DSA-65" => { public_key_bytes: 1_952, signature_bytes: 3_309 },
@@ -15,7 +15,7 @@ class TestRFC9964Vectors < Minitest::Test
     "ML-DSA-87" => PQCrypto::JWT::JWA::MLDSA87,
   }.freeze
 
-  def test_rfc9964_public_key_and_signature_sizes
+  def test_ml_dsa_public_key_and_signature_sizes
     EXPECTED_SIZES.each do |alg, sizes|
       keypair = PQCrypto::JWT::Keys.generate(alg)
       signature = JWA_BY_ALG.fetch(alg).sign(data: "payload", signing_key: keypair.secret_key)
@@ -27,7 +27,7 @@ class TestRFC9964Vectors < Minitest::Test
     end
   end
 
-  def test_rfc9964_akp_thumbprint_canonical_member_vector
+  def test_akp_thumbprint_uses_only_canonical_members
     jwk = {
       "kty" => "AKP",
       "alg" => "ML-DSA-65",
