@@ -9,6 +9,8 @@
 - `JWT::JWK::AKP` no longer expands and retains private seed material during initialization; private key materialization is lazy and happens only when `#secret_key` / `#signing_key` is requested.
 - `JWKS.from_keys(kids:)` now raises `ArgumentError` when the number of kids does not match the number of public keys.
 - JWKS lookup now ignores structurally invalid AKP JWK entries instead of returning malformed keys from weak filters.
+- JWKS lookup now prefilters by `kid`/`alg` before reconstructing public keys and uses a bounded immutable validation cache for repeated lookups.
+- `JWKS.from_keys(kids:)` now normalizes Array-compatible `kids` objects through `to_ary` before indexing.
 - `JWK.thumbprint` now validates the AKP `pub` length for the declared ML-DSA algorithm before computing the digest.
 - `DetachedSigningInputIO` now implements `#readpartial`, `#binmode`, `#binmode?`, and `#close` for better IO compatibility.
 

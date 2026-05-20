@@ -3,6 +3,8 @@
 require_relative "test_helper"
 
 class TestJWKRoundtrip < Minitest::Test
+  include PQCryptoJWTTestHelpers
+
   def test_signature_public_key_jwk_round_trip
     keypair = PQCrypto::JWT::Keys.generate("ML-DSA-65")
     jwk = PQCrypto::JWT::JWK.from_public_key(keypair.public_key, kid: "sig-key", use: "sig", key_ops: ["verify"])
@@ -21,20 +23,30 @@ class TestJWKRoundtrip < Minitest::Test
   def test_akp_jwk_does_not_expand_private_seed_on_initialize
     keypair = PQCrypto::JWT::Keys.generate("ML-DSA-65")
     jwk = PQCrypto::JWT::JWK.from_public_key(keypair.public_key).merge("priv" => PQCrypto::JWT::JWK.base64url("z" * 32))
-    original = PQCrypto::JWT::JWK.method(:secret_key_from_jwk)
     called = false
 
-    PQCrypto::JWT::JWK.define_singleton_method(:secret_key_from_jwk) do |*_args, **_kwargs|
+    with_stub(PQCrypto::JWT::JWK, :secret_key_from_jwk, ->(*_args, **_kwargs) {
       called = true
       raise "secret key should be materialized lazily"
+    }) do
+      akp = JWT::JWK::AKP.new(jwk)
+
+      refute called, "secret_key_from_jwk was called during AKP#initialize"
+      assert akp.private?
     end
+  end
+
+  def test_akp_jwk_materializes_secret_key_lazily_on_demand
+    keypair = PQCrypto::JWT::Keys.generate("ML-DSA-65")
+    seed = "z" * 32
+    jwk = PQCrypto::JWT::JWK.from_public_key(keypair.public_key).merge("priv" => PQCrypto::JWT::JWK.base64url(seed))
 
     akp = JWT::JWK::AKP.new(jwk)
+    secret_key = akp.secret_key
+    secret_key_again = akp.secret_key
 
-    refute called
-    assert akp.private?
-  ensure
-    PQCrypto::JWT::JWK.define_singleton_method(:secret_key_from_jwk) { |*args, **kwargs| original.call(*args, **kwargs) } if original
+    assert_instance_of PQCrypto::Signature::SecretKey, secret_key
+    assert_same secret_key, secret_key_again, "secret_key should be memoized after first materialization"
   end
 
   def test_akp_jwk_rejects_invalid_private_seed_metadata_without_expansion
