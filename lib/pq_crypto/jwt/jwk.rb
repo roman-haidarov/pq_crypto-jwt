@@ -17,13 +17,16 @@ module PQCrypto
         base_public_jwk(public_key.algorithm, public_key.to_bytes, kid: kid, use: use, key_ops: key_ops).freeze
       end
 
-      # RFC 9964 private AKP JWK uses the 32-byte ML-DSA seed in `priv`, not an expanded secret key.
+      # RFC 9964 private AKP JWK uses the 32-byte raw ML-DSA seed in `priv`, not an expanded secret key.
       # The public key is required by JWK, so current pq_crypto 0.6.x callers must pass it until
       # pq_crypto exposes Signature.keypair_from_seed/public_key_from_seed as public API.
-      def from_seed(seed, alg:, kid: nil, public_key: nil, use: nil, key_ops: nil)
+      # Pass verify_public: true to reject a public_key that does not match the seed once parent
+      # public seed-derivation APIs are available; on pq_crypto 0.6.1 this raises UnsupportedFeature.
+      def from_seed(seed, alg:, kid: nil, public_key: nil, use: nil, key_ops: nil, verify_public: false)
         algorithm = pq_algorithm_from_jose!(alg)
         seed_bytes = validate_seed!(seed, algorithm)
-        public_key ||= public_key_from_seed_if_supported(algorithm, seed_bytes)
+        derived_public = public_key_from_seed_if_supported(algorithm, seed_bytes) if public_key.nil? || verify_public
+        public_key ||= derived_public
         unless public_key
           raise PQCrypto::JWT::UnsupportedFeature,
                 "AKP JWK export from seed requires pq_crypto public_key_from_seed/keypair_from_seed or public_key:"
@@ -33,6 +36,17 @@ module PQCrypto
         unless public_key.algorithm == algorithm
           raise PQCrypto::JWT::KeyTypeError,
                 "public_key algorithm mismatch: expected #{algorithm.inspect}, got #{public_key.algorithm.inspect}"
+        end
+
+        if verify_public
+          unless derived_public
+            raise PQCrypto::JWT::UnsupportedFeature,
+                  "AKP JWK pub/priv consistency verification requires pq_crypto public_key_from_seed/keypair_from_seed"
+          end
+
+          unless public_key.to_bytes == derived_public.to_bytes
+            raise PQCrypto::JWT::Error, "AKP JWK public_key does not match priv seed"
+          end
         end
 
         jwk = base_public_jwk(algorithm, public_key.to_bytes, kid: kid, use: use, key_ops: key_ops)
@@ -60,11 +74,12 @@ module PQCrypto
         raise PQCrypto::JWT::Error, e.message
       end
 
-      # Imports the RFC 9964 private AKP `priv` seed.
+      # Imports the RFC 9964 private AKP `priv` raw seed.
       #
       # `pub` is still required by the JWK shape. With pq_crypto 0.6.1 the adapter cannot
-      # derive public bytes from a seed through public API, so `verify_public: true` raises
-      # UnsupportedFeature unless a future parent release exposes public seed derivation.
+      # derive public bytes from a seed through public API, so `pub` is trusted as metadata by
+      # default. Pass `verify_public: true` to require a public parent seed-derivation API and
+      # reject mismatched `pub`/`priv` material.
       def secret_key_from_jwk(hash, verify_public: false)
         jwk = normalize_hash!(hash)
         algorithm = algorithm_from_jwk!(jwk)
@@ -222,7 +237,15 @@ module PQCrypto
         end
 
         if secret_key.respond_to?(:to_seed)
-          return validate_seed!(secret_key.to_seed, secret_key.algorithm)
+          begin
+            seed = secret_key.to_seed
+          rescue PQCrypto::Error => e
+            raise PQCrypto::JWT::UnsupportedFeature, "SecretKey seed export failed: #{e.message}"
+          end
+
+          raise PQCrypto::JWT::UnsupportedFeature, "SecretKey #to_seed returned nil" if seed.nil?
+
+          return validate_seed!(seed, secret_key.algorithm)
         end
 
         raise PQCrypto::JWT::UnsupportedFeature,

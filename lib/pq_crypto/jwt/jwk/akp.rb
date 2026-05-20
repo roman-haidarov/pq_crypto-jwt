@@ -109,7 +109,6 @@ module JWT
         raise JWT::JWKError, "Incorrect 'kty' value: #{key_params[:kty]}, expected #{KTY}" unless key_params[:kty] == KTY
         raise JWT::JWKError, "AKP JWK alg is required" unless key_params[:alg]
         raise JWT::JWKError, "AKP JWK pub is required" unless key_params[:pub]
-        raise JWT::JWKError, "AKP JWK priv must be accompanied by pub" if key_params[:priv] && !key_params[:pub]
         raise JWT::JWKError, "Unsupported AKP JWK alg: #{key_params[:alg].inspect}" unless PQCrypto::JWT.algorithm_for(key_params[:alg])
 
         parsed = key_params.transform_keys(&:to_s)

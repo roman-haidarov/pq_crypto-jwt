@@ -17,8 +17,8 @@
 
 - `PQCrypto::JWT::UnsupportedFeature` for release-scope or parent-API-gated functionality.
 - Seed-based private AKP JWK import via `PQCrypto::JWT::JWK.secret_key_from_jwk`.
-- Optional strict private JWK `pub`/`priv` consistency verification via `verify_public: true`; this is gated on future parent public seed-derivation APIs.
-- Explicit seed-based private AKP JWK export via `PQCrypto::JWT::JWK.from_seed(..., public_key:)`.
+- Optional strict private JWK `pub`/`priv` consistency verification via `verify_public: true` for both import and explicit seed export; this is gated on future parent public seed-derivation APIs.
+- Explicit seed-based private AKP JWK export via `PQCrypto::JWT::JWK.from_seed(..., public_key:)`, with optional `verify_public: true` consistency checking when parent support exists.
 - Reserved `PQCrypto::JWT::JWK.from_secret_key` for future seed-exporting parent keys; current `pq_crypto 0.6.1` keys raise `UnsupportedFeature` instead of reading private parent state.
 - Optional public JWK metadata on export: `use:` and `key_ops:`.
 - DER helper methods:
@@ -35,8 +35,9 @@
 - `DetachedSigningInputIO#read(nil)` now follows the Ruby IO contract and reads to EOF.
 - Streaming verification now rejects non-object decoded JOSE headers before consulting `alg`.
 - Streaming verification now rejects compact tokens with extra segments.
-- One-shot verification rescues only expected verification/input errors instead of masking all `StandardError`.
+- One-shot verification rescues only expected verification/input/encoding errors instead of masking all `StandardError`.
 - `JWT::JWK::AKP` no longer advertises automatic dispatch for `SecretKey`/`Keypair` until parent seed-export APIs exist.
+- Removed a redundant unreachable private-JWK parameter check from `JWT::JWK::AKP`.
 - JWKS loader caching no longer relies on `||=`, so falsey JWKS values do not cause repeated reloads.
 
 ### Deferred

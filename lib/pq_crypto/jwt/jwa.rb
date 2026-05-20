@@ -9,6 +9,7 @@ module PQCrypto
       # RFC 9964 registers ML-DSA JOSE algorithms with an empty FIPS 204 context.
       # Do not expose this as a per-token option for ML-DSA-44/65/87 JWS.
       EMPTY_CONTEXT = "".b.freeze
+      VERIFY_ERR = [PQCrypto::Error, PQCrypto::JWT::Error, ::JWT::Error, ArgumentError, TypeError, EncodingError].freeze
 
       module MLDSA
         def valid_alg?(alg_to_validate)
@@ -57,7 +58,7 @@ module PQCrypto
           return false unless signature_length_valid?(signature)
 
           verification_key.verify(data.b, signature.b, context: PQCrypto::JWT::JWA::EMPTY_CONTEXT)
-        rescue PQCrypto::Error, PQCrypto::JWT::Error, ::JWT::Error, ArgumentError, TypeError
+        rescue *VERIFY_ERR
           false
         end
 
@@ -90,7 +91,7 @@ module PQCrypto
           details = PQCrypto::Signature.details(pq_crypto_algorithm)
           expected = details[:signature_bytes] || details["signature_bytes"]
           expected.nil? || signature.bytesize == expected
-        rescue PQCrypto::Error, PQCrypto::JWT::Error, ::JWT::Error, ArgumentError, TypeError
+        rescue *VERIFY_ERR
           false
         end
       end
