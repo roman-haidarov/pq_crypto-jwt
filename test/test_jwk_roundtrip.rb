@@ -5,7 +5,7 @@ require_relative "test_helper"
 class TestJWKRoundtrip < Minitest::Test
   def test_signature_public_key_jwk_round_trip
     keypair = PQCrypto::JWT::Keys.generate("ML-DSA-65")
-    jwk = PQCrypto::JWT::JWK.from_public_key(keypair.public_key, kid: "sig-key")
+    jwk = PQCrypto::JWT::JWK.from_public_key(keypair.public_key, kid: "sig-key", use: "sig", key_ops: ["verify"])
     imported_public_key = PQCrypto::JWT::JWK.public_key_from_jwk(jwk)
 
     assert_equal keypair.public_key.to_bytes, imported_public_key.to_bytes
@@ -13,27 +13,79 @@ class TestJWKRoundtrip < Minitest::Test
     assert_equal "AKP", jwk.fetch("kty")
     assert_equal "ML-DSA-65", jwk.fetch("alg")
     assert_equal "sig-key", jwk.fetch("kid")
+    assert_equal "sig", jwk.fetch("use")
+    assert_equal ["verify"], jwk.fetch("key_ops")
     refute jwk.key?("priv")
   end
 
-  def test_private_key_jwk_export_is_not_in_first_release_scope
+  def test_private_key_jwk_export_requires_seed_material
     keypair = PQCrypto::JWT::Keys.generate("ML-DSA-65")
 
-    assert_raises(PQCrypto::JWT::UnsupportedAlgorithm) { PQCrypto::JWT::JWK.from_secret_key(keypair) }
-  end
-
-  def test_private_key_jwk_import_is_not_in_first_release_scope
-    assert_raises(PQCrypto::JWT::UnsupportedAlgorithm) do
-      PQCrypto::JWT::JWK.secret_key_from_jwk({ "kty" => "AKP", "alg" => "ML-DSA-65", "pub" => "", "priv" => "" })
+    assert_raises(PQCrypto::JWT::UnsupportedFeature) do
+      PQCrypto::JWT::JWK.from_secret_key(keypair)
     end
   end
 
-  def test_public_key_from_jwk_rejects_private_material
+
+  def test_from_seed_requires_public_key_until_parent_exposes_public_derivation
+    skip "pq_crypto exposes public seed derivation" if PQCrypto::Signature.respond_to?(:public_key_from_seed) || PQCrypto::Signature.respond_to?(:keypair_from_seed)
+
+    assert_raises(PQCrypto::JWT::UnsupportedFeature) do
+      PQCrypto::JWT::JWK.from_seed("s" * 32, alg: "ML-DSA-65")
+    end
+  end
+
+  def test_private_key_jwk_import_strict_public_check_requires_parent_derivation
+    skip "pq_crypto exposes public seed derivation" if PQCrypto::Signature.respond_to?(:public_key_from_seed) || PQCrypto::Signature.respond_to?(:keypair_from_seed)
+
+    keypair = PQCrypto::JWT::Keys.generate("ML-DSA-65")
+    jwk = PQCrypto::JWT::JWK.from_public_key(keypair.public_key).merge("priv" => PQCrypto::JWT::JWK.base64url("z" * 32))
+
+    assert_raises(PQCrypto::JWT::UnsupportedFeature) do
+      PQCrypto::JWT::JWK.secret_key_from_jwk(jwk, verify_public: true)
+    end
+  end
+
+  def test_private_key_jwk_export_from_seed_aware_keypair_when_parent_exposes_seed
+    skip "pq_crypto does not expose public seed-aware keypair API yet" unless PQCrypto::Signature.respond_to?(:keypair_from_seed)
+
+    seed = "s" * 32
+    keypair = PQCrypto::Signature.keypair_from_seed(:ml_dsa_65, seed)
+    skip "pq_crypto SecretKey does not expose #to_seed yet" unless keypair.secret_key.respond_to?(:to_seed)
+
+    jwk = PQCrypto::JWT::JWK.from_secret_key(keypair, kid: "seed-key")
+
+    assert_equal "AKP", jwk.fetch("kty")
+    assert_equal "ML-DSA-65", jwk.fetch("alg")
+    assert_equal "seed-key", jwk.fetch("kid")
+    assert_equal PQCrypto::JWT::JWK.base64url(seed), jwk.fetch("priv")
+  end
+
+  def test_private_key_jwk_import_from_seed
+    keypair = PQCrypto::JWT::Keys.generate("ML-DSA-65")
+    seed = "z" * 32
+    jwk = PQCrypto::JWT::JWK.from_public_key(keypair.public_key).merge("priv" => PQCrypto::JWT::JWK.base64url(seed))
+    secret_key = PQCrypto::JWT::JWK.secret_key_from_jwk(jwk)
+
+    assert_instance_of PQCrypto::Signature::SecretKey, secret_key
+    assert_equal :ml_dsa_65, secret_key.algorithm
+  end
+
+  def test_public_key_from_jwk_accepts_private_material_but_uses_public_part_only
     keypair = PQCrypto::JWT::Keys.generate("ML-DSA-65")
     jwk = PQCrypto::JWT::JWK.from_public_key(keypair.public_key).dup
-    jwk["priv"] = "private-material"
+    jwk["priv"] = PQCrypto::JWT::JWK.base64url("z" * 32)
 
-    assert_raises(PQCrypto::JWT::UnsupportedAlgorithm) { PQCrypto::JWT::JWK.public_key_from_jwk(jwk) }
+    imported = PQCrypto::JWT::JWK.public_key_from_jwk(jwk)
+
+    assert_equal keypair.public_key.to_bytes, imported.to_bytes
+  end
+
+  def test_secret_key_from_jwk_rejects_invalid_private_seed_length
+    keypair = PQCrypto::JWT::Keys.generate("ML-DSA-65")
+    jwk = PQCrypto::JWT::JWK.from_public_key(keypair.public_key).merge("priv" => PQCrypto::JWT::JWK.base64url("x" * 31))
+
+    assert_raises(PQCrypto::JWT::Error) { PQCrypto::JWT::JWK.secret_key_from_jwk(jwk) }
   end
 
   def test_jwk_rejects_unsupported_alg

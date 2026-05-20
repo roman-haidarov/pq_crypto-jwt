@@ -2,27 +2,28 @@
 
 `pq_crypto-jwt` is a small adapter that connects [`pq_crypto`](https://rubygems.org/gems/pq_crypto) to the [`ruby-jwt`](https://rubygems.org/gems/jwt) ecosystem.
 
-The first public release intentionally focuses on one stable surface:
+This release focuses on the RFC 9964 ML-DSA JWS surface:
 
 - ML-DSA JWS signing and verification for `ruby-jwt`
-- public AKP JWK/JWKS helpers for ML-DSA verification keys
-- PEM import helpers for ML-DSA SPKI/PKCS#8 keys
-- ML-DSA-65 streaming detached JWS helper
+- AKP JWK/JWKS helpers for ML-DSA verification keys
+- seed-based private AKP JWK import and explicit seed export paths
+- PEM/DER import helpers for ML-DSA SPKI/PKCS#8 keys through `PQCrypto::Key`
+- streaming detached JWS helpers for `ML-DSA-44`, `ML-DSA-65`, and `ML-DSA-87`
 
-ML-KEM/JWE is **not included** in this first release. Full JWE support needs a separate standards-compatible implementation and interoperability tests.
+ML-KEM/JWE is **not included**. Full JWE support needs a separate standards-compatible implementation and interoperability tests.
 
 ## Requirements
 
 - Ruby `>= 3.1.0`
-- `pq_crypto` `>= 0.5.4`, `< 0.6`
+- `pq_crypto` `~> 0.6.1`
 - `jwt` `>= 3.1`, `< 4.0`
 
-`pq_crypto-jwt` is Ruby-only and does not ship its own native extension. Native ML-DSA work is delegated to `pq_crypto`; Ruby 3.4+ keeps the optimized `pq_crypto` path, while Ruby 3.1-3.3 use the compatibility path provided by `pq_crypto` 0.5.3+.
+`pq_crypto-jwt` is Ruby-only and does not ship its own native extension. Native ML-DSA work, seed-aware keys, PKCS#8/SPKI parsing, and streaming signing/verification are delegated to `pq_crypto`.
 
 ## Install
 
 ```ruby
-gem "pq_crypto-jwt", "~> 0.1"
+gem "pq_crypto-jwt", "~> 0.2"
 ```
 
 ## Register the algorithms
@@ -55,9 +56,11 @@ token = JWT.encode({ "sub" => "alice" }, keypair.secret_key, "ML-DSA-65")
 payload, header = JWT.decode(token, keypair.public_key, true, algorithm: "ML-DSA-65")
 ```
 
-The adapter validates both the JOSE algorithm string and the concrete pq_crypto key type. A token signed with `ML-DSA-44`, for example, will not verify under `ML-DSA-65`.
+The adapter validates both the JOSE algorithm string and the concrete `pq_crypto` key type. A token signed with `ML-DSA-44`, for example, will not verify under `ML-DSA-65`.
 
-## PEM import
+For RFC 9964 JOSE algorithms, the FIPS 204 `ctx` value is fixed to the empty string. The adapter passes `context: "".b` explicitly in both one-shot and streaming paths and does not expose a per-token context option for `ML-DSA-44`, `ML-DSA-65`, or `ML-DSA-87`.
+
+## PEM and DER import
 
 SPKI public keys and PKCS#8 secret keys can be imported through the helper API:
 
@@ -76,6 +79,13 @@ public_key = PQCrypto::JWT::Keys.public_from_pem(spki_pem, expect: :signature)
 secret_key = PQCrypto::JWT::Keys.secret_from_pem(pkcs8_pem, expect: :signature)
 ```
 
+DER helpers are also available:
+
+```ruby
+public_key = PQCrypto::JWT::Keys.public_from_der(spki_der)
+secret_key = PQCrypto::JWT::Keys.secret_from_der(pkcs8_der, passphrase: passphrase)
+```
+
 ## JWK and JWKS
 
 Public AKP JWK round-trip:
@@ -85,6 +95,39 @@ keypair = PQCrypto::JWT::Keys.generate("ML-DSA-65")
 jwk = PQCrypto::JWT::JWK.from_public_key(keypair.public_key, kid: "signing-key")
 public_key = PQCrypto::JWT::JWK.public_key_from_jwk(jwk)
 ```
+
+Optional public JWK metadata can be supplied directly:
+
+```ruby
+jwk = PQCrypto::JWT::JWK.from_public_key(
+  keypair.public_key,
+  kid: "signing-key",
+  use: "sig",
+  key_ops: ["verify"]
+)
+```
+
+Private AKP JWK uses RFC 9964 seed format: `priv` is the 32 raw-byte ML-DSA seed encoded as base64url. It is not the expanded ML-DSA secret key, and helper APIs expect raw seed bytes, not hex or text encodings.
+
+```ruby
+secret_key = PQCrypto::JWT::JWK.secret_key_from_jwk(private_jwk)
+```
+
+With `pq_crypto 0.6.1`, private import trusts the JWK `pub` field as metadata because the parent gem does not expose public seed derivation yet. Callers that need a strict `pub`/`priv` consistency check can request it explicitly; this will raise `UnsupportedFeature` until the parent exposes `Signature.public_key_from_seed` or `Signature.keypair_from_seed`:
+
+```ruby
+secret_key = PQCrypto::JWT::JWK.secret_key_from_jwk(private_jwk, verify_public: true)
+```
+
+Export is intentionally explicit. Current `pq_crypto 0.6.1` can import seed-aware keys but does not expose a stable public seed accessor / public-key-from-seed API, so use `from_seed` and pass the matching public key:
+
+```ruby
+jwk = PQCrypto::JWT::JWK.from_seed(seed_32_bytes, alg: "ML-DSA-65", public_key: public_key)
+```
+
+`from_seed` also accepts `verify_public: true` for symmetry with private import. On current `pq_crypto 0.6.1` this raises `UnsupportedFeature`; once the parent exposes public seed derivation, it will reject a `public_key:` that does not match the supplied seed. Without `verify_public: true`, the explicitly supplied `public_key:` is trusted.
+
+`from_secret_key` is reserved for a future parent release that exposes a public seed accessor. Expanded-only keys, and current `pq_crypto 0.6.1` keys, raise `UnsupportedFeature` instead of reading parent private state.
 
 JWKS lookup with `ruby-jwt`:
 
@@ -97,11 +140,11 @@ token = JWT.encode({ "sub" => "alice" }, keypair.secret_key, "ML-DSA-65", kid: "
 payload, header = JWT.decode(token, nil, true, algorithms: ["ML-DSA-65"], jwks: jwks)
 ```
 
-For rotation, pass `PQCrypto::JWT::JWKS.loader(callable_or_hash)` as the `jwks:` value.
+For rotation, pass `PQCrypto::JWT::JWKS.loader(callable_or_hash)` as the `jwks:` value. The loader refreshes when `ruby-jwt` calls it with `invalidate: true`.
 
 ## Streaming detached JWS
 
-`ML-DSA-65` also supports a streaming detached JWS helper. The compact form is `header..signature`; callers must supply the same payload stream separately for verification.
+All three ML-DSA JOSE algorithms support the streaming detached JWS helper when backed by `pq_crypto ~> 0.6.1`. The compact form is `header..signature`; callers must supply the same payload stream separately for verification.
 
 ```ruby
 File.open("payload.bin", "rb") do |payload_io|
@@ -120,24 +163,35 @@ File.open("payload.bin", "rb") do |payload_io|
 end
 ```
 
-## Non-goals for the first release
+Equivalent helpers exist on:
 
-The first release deliberately does **not** expose:
+```text
+PQCrypto::JWT::JWA::MLDSA44
+PQCrypto::JWT::JWA::MLDSA65
+PQCrypto::JWT::JWA::MLDSA87
+```
+
+`verify_io` returns `[payload_position, header]` on success. `payload_position` is `nil` for non-seekable streams that do not respond to `#pos`.
+
+## Non-goals
+
+This adapter deliberately does **not** expose:
 
 - ML-KEM JWE key agreement
 - JWE compact or JSON serialization
 - JWE content encryption, AAD, IV, or authentication tag handling
-- private AKP JWK import/export; use PEM/PKCS#8 for signing keys
+- composite / hybrid JOSE signatures
+- custom ML-DSA JOSE `ctx` values
 - general-purpose JWT claims policy beyond what `ruby-jwt` already provides
 
-This keeps the public API small and avoids publishing draft-incompatible JWE behavior.
+This keeps the public API small and avoids publishing speculative JWE or composite-signature behavior before the relevant JOSE work is stable.
 
 ## Security status
 
 ```text
-unaudited; tracks draft-ietf-cose-dilithium for ML-DSA JOSE identifiers;
-identifiers and wire formats may change before RFC publication; backed by
-pq_crypto, which should also be reviewed before production use.
+unaudited; implements the RFC 9964 ML-DSA JOSE algorithm identifiers and AKP
+JWK seed encoding; backed by pq_crypto, which should also be reviewed before
+production use.
 ```
 
 Use in production only after your own security review and interoperability testing.
