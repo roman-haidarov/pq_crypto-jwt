@@ -17,6 +17,35 @@ class TestJWKSLookup < Minitest::Test
     assert_equal "kid-1", jwk.fetch("kid")
   end
 
+  def test_find_all_applies_lookup_options
+    first = PQCrypto::JWT::Keys.generate("ML-DSA-65")
+    second = PQCrypto::JWT::Keys.generate("ML-DSA-65")
+    jwks = PQCrypto::JWT::JWKS.from_keys([first.public_key, second.public_key], kids: %w[first second])
+
+    matches = PQCrypto::JWT::JWKS.find_all(jwks, kid: "second", alg: "ML-DSA-65")
+
+    assert_equal(["second"], matches.map { |jwk| jwk.fetch("kid") })
+  end
+
+  def test_find_by_thumbprint
+    first = PQCrypto::JWT::Keys.generate("ML-DSA-65")
+    second = PQCrypto::JWT::Keys.generate("ML-DSA-65")
+    jwks = PQCrypto::JWT::JWKS.from_keys([first.public_key, second.public_key], kids: %w[first second])
+    thumbprint = PQCrypto::JWT::JWK.thumbprint(jwks.fetch("keys").fetch(1))
+
+    assert_equal "second", PQCrypto::JWT::JWKS.find(jwks, thumbprint: thumbprint).fetch("kid")
+    assert_nil PQCrypto::JWT::JWKS.find(jwks, thumbprint: "unknown")
+  end
+
+  def test_from_keys_validates_kid_strategy
+    keypair = PQCrypto::JWT::Keys.generate("ML-DSA-65")
+
+    assert_raises(ArgumentError) { PQCrypto::JWT::JWKS.from_keys([keypair.public_key], kid_strategy: :random) }
+    assert_raises(ArgumentError) do
+      PQCrypto::JWT::JWKS.from_keys([keypair.public_key], kids: ["kid-1"], kid_strategy: :thumbprint)
+    end
+  end
+
   def test_from_keys_rejects_mismatched_kids_length
     keypair = PQCrypto::JWT::Keys.generate("ML-DSA-65")
 
@@ -135,7 +164,7 @@ class TestJWKSLookup < Minitest::Test
     loader = PQCrypto::JWT::JWKS.loader(lambda do |_options|
       fetch_count += 1
       fetch_started = true
-      release_gate.pop # block until released
+    release_gate.pop
       { "keys" => [] }
     end)
 
@@ -174,7 +203,7 @@ class TestJWKSLookup < Minitest::Test
     keypair = PQCrypto::JWT::Keys.generate("ML-DSA-65")
     jwks = PQCrypto::JWT::JWKS.from_keys([keypair.public_key], kids: ["kid-1"])
 
-    PQCrypto::JWT::JWKS.find(jwks, kid: "kid-1") # warm cache
+    PQCrypto::JWT::JWKS.find(jwks, kid: "kid-1")
     PQCrypto::JWT::JWKS.clear_validation_cache!
 
     call_count = 0
@@ -190,5 +219,21 @@ class TestJWKSLookup < Minitest::Test
   ensure
     PQCrypto::JWT::JWK.singleton_class.send(:remove_method, :public_key_from_jwk)
     PQCrypto::JWT::JWK.define_singleton_method(:public_key_from_jwk, original) if original
+  end
+
+  def test_lookup_ignores_non_hash_containers
+    [nil, [], "invalid", 42].each do |container|
+      assert_nil PQCrypto::JWT::JWKS.find(container)
+      assert_empty PQCrypto::JWT::JWKS.find_all(container)
+    end
+  end
+
+  def test_lookup_skips_broken_and_padded_entries
+    jwk = PQCrypto::JWT::JWK.from_public_key(PQCrypto::JWT::Keys.generate("ML-DSA-65").public_key, kid: "good")
+    broken = Object.new
+    broken.define_singleton_method(:to_hash) { nil }
+    padded = jwk.merge("kid" => "padded", "pub" => "#{jwk.fetch('pub')}=")
+
+    assert_equal [jwk], PQCrypto::JWT::JWKS.find_all({ "keys" => [broken, padded, jwk] })
   end
 end

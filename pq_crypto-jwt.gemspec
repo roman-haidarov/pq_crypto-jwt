@@ -8,7 +8,8 @@ Gem::Specification.new do |spec|
   spec.authors       = ["Roman Haydarov"]
   spec.email         = ["romanhajdarov@gmail.com"]
   spec.summary       = "ML-DSA JWS algorithms for ruby-jwt backed by pq_crypto"
-  spec.description   = "Ruby-only adapter that adds post-quantum ML-DSA JWS signing and AKP JWK/JWKS helpers to ruby-jwt, backed by pq_crypto."
+  spec.description   = "Ruby-only adapter that adds post-quantum ML-DSA JWS signing and AKP JWK/JWKS helpers " \
+                       "to ruby-jwt, backed by pq_crypto."
   spec.homepage      = "https://github.com/roman-haidarov/pq_crypto-jwt"
   spec.license       = "MIT"
   spec.metadata = {

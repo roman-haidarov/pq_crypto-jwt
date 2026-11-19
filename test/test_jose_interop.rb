@@ -7,7 +7,9 @@ require "tempfile"
 
 class TestJOSEInterop < Minitest::Test
   def test_node_jose_interop_for_ml_dsa_65
-    skip "set JOSE_INTEROP=1 and install Node jose to run cross-implementation interop" unless ENV["JOSE_INTEROP"] == "1"
+    unless ENV["JOSE_INTEROP"] == "1"
+      skip "set JOSE_INTEROP=1 and install Node jose to run cross-implementation interop"
+    end
 
     node_version, node_version_err, node_version_status = Open3.capture3("node", "--version")
     skip "node is unavailable: #{node_version_err}" unless node_version_status.success?

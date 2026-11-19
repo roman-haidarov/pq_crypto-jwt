@@ -5,7 +5,7 @@ require_relative "test_helper"
 class TestAlgStrings < Minitest::Test
   include PQCryptoJWTTestHelpers
 
-  JWS_ALGS = ["ML-DSA-44", "ML-DSA-65", "ML-DSA-87"].freeze
+  JWS_ALGS = %w[ML-DSA-44 ML-DSA-65 ML-DSA-87].freeze
 
   def test_algorithms_are_exact_and_case_sensitive
     assert_equal JWS_ALGS, PQCrypto::JWT.algorithms.map(&:alg)
@@ -25,5 +25,20 @@ class TestAlgStrings < Minitest::Test
       token = JWT.encode({ "foo" => "bar" }, keypair.secret_key, alg)
       assert_equal alg, decode_header(token).fetch("alg")
     end
+  end
+
+  def test_algorithms_are_frozen_ruby_jwt_signing_algorithms
+    PQCrypto::JWT.algorithms.each do |algorithm|
+      assert_kind_of JWT::JWA::SigningAlgorithm, algorithm
+      assert_predicate algorithm, :frozen?
+      assert_equal :signature, algorithm.key_kind
+    end
+  end
+
+  def test_register_is_idempotent
+    assert PQCrypto::JWT.register!
+    assert PQCrypto::JWT.register!
+    assert_predicate PQCrypto::JWT, :registered?
+    assert_equal 1, JWT::JWK.classes.count(JWT::JWK::AKP)
   end
 end

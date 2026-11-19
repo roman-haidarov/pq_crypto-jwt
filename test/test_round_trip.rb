@@ -5,7 +5,7 @@ require_relative "test_helper"
 class TestRoundTrip < Minitest::Test
   include PQCryptoJWTTestHelpers
 
-  ALGORITHMS = ["ML-DSA-44", "ML-DSA-65", "ML-DSA-87"].freeze
+  ALGORITHMS = %w[ML-DSA-44 ML-DSA-65 ML-DSA-87].freeze
 
   def test_round_trip_for_all_algorithms
     ALGORITHMS.each do |alg|

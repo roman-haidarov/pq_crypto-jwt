@@ -27,7 +27,6 @@ class TestHardConstraints < Minitest::Test
     assert_match(/spec\.extensions\s*=\s*\[\]/, gemspec)
   end
 
-
   def test_runtime_ruby_floor_is_31
     gemspec = File.read(File.expand_path("../pq_crypto-jwt.gemspec", __dir__))
 

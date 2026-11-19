@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.2.3
+
+### Breaking
+
+- JWK `pub` / `priv` members and detached JWS segments must be unpadded base64url strings (RFC 7515, RFC 7517).
+  Padded, standard-alphabet and non-String values are rejected, so a key or signature has exactly one accepted
+  encoding. `PQCrypto::JWT::JWK.base64url_decode` raises `PQCrypto::JWT::Error` for them.
+- `PQCrypto::JWT::MLDSA44/65/87` are frozen instances of `PQCrypto::JWT::JWA::MLDSA`, which includes
+  `JWT::JWA::SigningAlgorithm` like ruby-jwt's built-in algorithms. The `::ALG` / `::PQ_CRYPTO_ALGORITHM`
+  constants are replaced by `#alg` / `#pq_crypto_algorithm`.
+- `JWT::JWK::AKP#parameters` returns a frozen snapshot and the cryptographic members are frozen copies. Metadata
+  still changes through `[]=`. JWK hashes returned by `JWK.from_public_key` / `JWK.from_seed` freeze their values.
+
+### Changed
+
+- Streaming lives in the `PQCrypto::JWT::JWA::Streaming` mixin; `MLDSAStreaming` remains as an alias and the
+  per-algorithm require paths (`pq_crypto/jwt/jwa/ml_dsa_65` etc.) still load the gem.
+- `JWK`, `JWKS` and `Keys` use `extend self` with a `private` section instead of per-method `private_class_method`.
+- CI adds `jwt ~> 3.3.0` to the matrix and a RuboCop lint job.
+
+### Fixed
+
+- `JWT::JWK::AKP#members` no longer includes `priv`. ruby-jwt's `JWT::JWK::Thumbprint` kid generator hashed the
+  private seed for private AKP JWKs, so they got a different `kid` than their public counterpart.
+- `JWT::JWK::AKP` copies its cryptographic members on import, so mutating the caller's strings afterwards can no
+  longer desynchronize the exported `pub` from the already parsed public key.
+- `JWKS.find` / `JWKS.find_all` return `nil` / `[]` for non-Hash containers instead of raising `TypeError`, and skip
+  entries whose `#to_hash` does not return a Hash.
+
 ## 0.2.2
 
 ### Fixed
