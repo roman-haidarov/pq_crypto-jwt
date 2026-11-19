@@ -10,9 +10,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-24.04, macos-latest]
         ruby: ["3.1", "3.2", "3.3", "3.4", "4.0"]
-        jwt-version: ["~> 3.1.0", "~> 3.2.0"]
+        jwt-version: ["~> 3.1.0", "~> 3.2.0", "~> 3.3.0"]
     runs-on: ${{ matrix.os }}
     env:
       JWT_VERSION: ${{ matrix.jwt-version }}
@@ -22,19 +22,22 @@ jobs:
         with:
           ruby-version: ${{ matrix.ruby }}
           bundler-cache: true
+      - if: failure()
+        run: find vendor/bundle -name mkmf.log -exec tail -n 60 {} \;
       - run: bundle exec rake test
 
   jose-interop:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       JOSE_INTEROP: "1"
-      JWT_VERSION: "~> 3.2.0"
     steps:
       - uses: actions/checkout@v4
       - uses: ruby/setup-ruby@v1
         with:
           ruby-version: "3.4"
           bundler-cache: true
+      - if: failure()
+        run: find vendor/bundle -name mkmf.log -exec tail -n 60 {} \;
       - uses: actions/setup-node@v4
         with:
           node-version: "24"

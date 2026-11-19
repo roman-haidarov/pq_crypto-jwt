@@ -18,7 +18,7 @@ ML-KEM/JWE is **not included**. Full JWE support needs a separate standards-comp
 - `pq_crypto` `~> 0.6.1`
 - `jwt` `>= 3.1`, `< 4.0`
 
-The CI release matrix covers Ruby `3.1`, `3.2`, `3.3`, `3.4`, `4.0` crossed with `jwt ~> 3.1.0` and `jwt ~> 3.2.0` on Linux and macOS. A dedicated Node `jose` interop job runs on Node 24 with `JOSE_INTEROP=1`.
+The CI release matrix covers Ruby `3.1`, `3.2`, `3.3`, `3.4`, `4.0` crossed with `jwt ~> 3.1.0`, `jwt ~> 3.2.0` and `jwt ~> 3.3.0` on Linux and macOS. A dedicated Node `jose` interop job runs on Node 24 with `JOSE_INTEROP=1`.
 
 `pq_crypto-jwt` is Ruby-only and does not ship its own native extension. Native ML-DSA work, seed-aware keys, PKCS#8/SPKI parsing, and streaming signing/verification are delegated to `pq_crypto`.
 
@@ -27,6 +27,12 @@ The CI release matrix covers Ruby `3.1`, `3.2`, `3.3`, `3.4`, `4.0` crossed with
 ```ruby
 gem "pq_crypto-jwt", "~> 0.2"
 ```
+
+## Upgrading from 0.2.x
+
+- JWK `pub` / `priv` members and detached JWS segments must be unpadded base64url strings (RFC 7515, RFC 7517). Padded or standard-alphabet Base64 values, which 0.2.x tolerated, are now rejected; re-encode them before import.
+- `JWT::JWK::AKP#parameters` returns a frozen snapshot, and the `kty`, `alg`, `pub` and `priv` values are frozen. Change metadata through `akp[:kid] = "..."`.
+- `PQCrypto::JWT::MLDSA44`, `MLDSA65` and `MLDSA87` are frozen algorithm objects instead of modules. Use `.alg` and `.pq_crypto_algorithm` instead of the internal `::ALG` and `::PQ_CRYPTO_ALGORITHM` constants. `require "pq_crypto/jwt/jwa/ml_dsa_65"` and the other per-algorithm paths still work.
 
 ## Register the algorithms
 
@@ -108,6 +114,8 @@ jwk = PQCrypto::JWT::JWK.from_public_key(
   key_ops: ["verify"]
 )
 ```
+
+`pub` and `priv` must be unpadded base64url strings; padded or standard Base64 values are rejected.
 
 Private AKP JWK uses RFC 9964 seed format: `priv` is the 32 raw-byte ML-DSA seed encoded as base64url. It is not the expanded ML-DSA secret key, and helper APIs expect raw seed bytes, not hex or text encodings.
 

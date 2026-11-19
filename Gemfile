@@ -4,6 +4,5 @@ source "https://rubygems.org"
 
 gemspec
 
-if ENV["JWT_VERSION"] && !ENV["JWT_VERSION"].empty?
-  gem "jwt", ENV.fetch("JWT_VERSION")
-end
+jwt_version = ENV.fetch("JWT_VERSION", "")
+gem "jwt", jwt_version unless jwt_version.empty?
